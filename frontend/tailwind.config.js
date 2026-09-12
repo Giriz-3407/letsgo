@@ -6,14 +6,29 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      },
       colors: {
+        canvas: '#09090b',
+        surface: {
+          DEFAULT: '#111114',
+          subtle: '#16161b',
+          elevated: '#1c1c22',
+          hover: '#22222a',
+        },
+        border: {
+          subtle: 'rgba(255, 255, 255, 0.07)',
+          DEFAULT: 'rgba(255, 255, 255, 0.12)',
+          strong: 'rgba(255, 255, 255, 0.20)',
+        },
         brand: {
-          50: '#f0f4ff',
-          100: '#dbe4fe',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          900: '#1e3a8a',
+          50: '#f4f4f5',
+          100: '#e4e4e7',
+          500: '#ffffff',
+          600: '#f4f4f5',
+          700: '#d4d4d8',
+          900: '#18181b',
         }
       }
     },

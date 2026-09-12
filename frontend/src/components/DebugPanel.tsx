@@ -1,7 +1,7 @@
 import React from 'react';
 import { SyncStats, PlaybackSynchronizer } from '../sync/PlaybackSynchronizer';
 import { PlaybackChangeSource } from '../types';
-import { Activity, Gauge, Wifi, Zap } from 'lucide-react';
+import { Terminal, RefreshCw } from 'lucide-react';
 
 interface Props {
   stats: SyncStats | null;
@@ -14,7 +14,6 @@ export const DebugPanel: React.FC<Props> = ({ stats, synchronizer, videoElement 
 
   const injectDrift = (seconds: number) => {
     if (!videoElement || !synchronizer) return;
-    // Inject artificial drift without notifying server to test auto-correction
     synchronizer.setChangeSource(PlaybackChangeSource.SYNC);
     videoElement.currentTime = Math.max(0, videoElement.currentTime + seconds);
     setTimeout(() => {
@@ -36,109 +35,93 @@ export const DebugPanel: React.FC<Props> = ({ stats, synchronizer, videoElement 
   };
 
   return (
-    <div className="bg-slate-900/95 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-xl text-xs space-y-3 font-mono">
-      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-        <div className="flex items-center gap-2 text-slate-200 font-semibold font-sans">
-          <Activity className="w-4 h-4 text-blue-400" />
-          <span>Sync & Latency Diagnostics</span>
+    <div className="bg-[#0e0e12] border border-white/[0.08] rounded-xl p-4 text-xs font-mono space-y-4 select-none">
+      <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+        <div className="flex items-center gap-2 text-neutral-300 font-sans font-medium text-xs">
+          <Terminal className="w-3.5 h-3.5 text-neutral-400" />
+          <span>Playback Diagnostics</span>
         </div>
-        <span className="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-300 border border-blue-800">
-          Dev Mode
+        <span className="text-[10px] text-neutral-500 uppercase tracking-widest font-mono">
+          Dev Console
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-          <span className="text-slate-400 block mb-1">Authoritative Room Pos</span>
-          <span className="text-blue-400 font-bold text-sm">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.04]">
+          <span className="text-neutral-500 text-[10px] block mb-0.5">Authoritative Pos</span>
+          <span className="text-neutral-100 font-medium text-xs">
             {stats.authoritativePosition.toFixed(3)}s
           </span>
         </div>
 
-        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-          <span className="text-slate-400 block mb-1">Local Player Pos</span>
-          <span className="text-slate-100 font-bold text-sm">
+        <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.04]">
+          <span className="text-neutral-500 text-[10px] block mb-0.5">Local Player Pos</span>
+          <span className="text-neutral-100 font-medium text-xs">
             {stats.localPosition.toFixed(3)}s
           </span>
         </div>
 
-        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-          <span className="text-slate-400 block mb-1">Playback Drift</span>
-          <span
-            className={`font-bold text-sm ${
-              Math.abs(stats.driftMs) < 150
-                ? 'text-emerald-400'
-                : Math.abs(stats.driftMs) < 1500
-                ? 'text-amber-400'
-                : 'text-rose-400'
-            }`}
-          >
+        <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.04]">
+          <span className="text-neutral-500 text-[10px] block mb-0.5">Playback Drift</span>
+          <span className="text-neutral-100 font-medium text-xs">
             {stats.driftMs > 0 ? `+${stats.driftMs}` : stats.driftMs} ms
-          </span>
-          <span className="text-[10px] text-slate-500 block">
-            {Math.abs(stats.driftMs) < 150 ? 'Deadband (OK)' : Math.abs(stats.driftMs) < 1500 ? 'Ramping tempo' : 'Hard seek'}
           </span>
         </div>
 
-        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-          <span className="text-slate-400 block mb-1">WebSocket RTT</span>
-          <span className="text-slate-100 font-bold text-sm flex items-center gap-1">
-            <Wifi className="w-3 h-3 text-emerald-400" />
+        <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.04]">
+          <span className="text-neutral-500 text-[10px] block mb-0.5">WebSocket RTT</span>
+          <span className="text-neutral-100 font-medium text-xs">
             {stats.rttMs} ms
           </span>
         </div>
 
-        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-          <span className="text-slate-400 block mb-1">Clock Offset (NTP)</span>
-          <span className="text-slate-100 font-bold text-sm">
+        <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.04]">
+          <span className="text-neutral-500 text-[10px] block mb-0.5">Clock Offset (NTP)</span>
+          <span className="text-neutral-100 font-medium text-xs">
             {stats.clockOffsetMs > 0 ? `+${stats.clockOffsetMs}` : stats.clockOffsetMs} ms
           </span>
         </div>
 
-        <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-          <span className="text-slate-400 block mb-1">Active Playback Rate</span>
-          <span
-            className={`font-bold text-sm flex items-center gap-1 ${
-              stats.playbackRate === 1.0 ? 'text-slate-200' : 'text-cyan-400'
-            }`}
-          >
-            <Gauge className="w-3 h-3 text-cyan-400" />
+        <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.04]">
+          <span className="text-neutral-500 text-[10px] block mb-0.5">Playback Rate</span>
+          <span className="text-neutral-100 font-medium text-xs">
             {stats.playbackRate.toFixed(2)}x
           </span>
         </div>
       </div>
 
-      <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex items-center justify-between text-[11px]">
-        <span className="text-slate-400">Media Buffered:</span>
-        <span className="text-slate-200">
+      <div className="bg-white/[0.02] p-2 rounded-lg border border-white/[0.04] flex items-center justify-between text-[11px]">
+        <span className="text-neutral-500">Buffered Ahead:</span>
+        <span className="text-neutral-300">
           {stats.bufferedUntil.toFixed(1)}s ({stats.bufferPercent}%)
         </span>
       </div>
 
-      <div className="pt-2 border-t border-slate-800 space-y-1.5 font-sans">
-        <span className="text-[11px] text-slate-400 block">Simulate Latency / Drift:</span>
+      <div className="pt-2 border-t border-white/[0.08] space-y-2 font-sans">
+        <span className="text-[11px] text-neutral-500 block">Simulate Sync Drift:</span>
         <div className="flex gap-2">
           <button
             onClick={() => injectDrift(-2)}
-            className="flex-1 py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-mono transition"
+            className="flex-1 h-8 px-2 bg-white/[0.04] hover:bg-white/[0.08] text-neutral-300 rounded text-xs font-mono transition-colors border border-white/[0.06]"
           >
             -2s Drift
           </button>
           <button
             onClick={() => injectDrift(2)}
-            className="flex-1 py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-mono transition"
+            className="flex-1 h-8 px-2 bg-white/[0.04] hover:bg-white/[0.08] text-neutral-300 rounded text-xs font-mono transition-colors border border-white/[0.06]"
           >
             +2s Drift
           </button>
           <button
             onClick={forceSync}
-            className="py-1.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium transition flex items-center gap-1"
+            className="h-8 px-3 bg-white hover:bg-neutral-200 text-black rounded text-xs font-medium transition-colors flex items-center gap-1.5"
           >
-            <Zap className="w-3 h-3" />
-            Force Sync
+            <RefreshCw className="w-3 h-3" />
+            <span>Force sync</span>
           </button>
         </div>
       </div>
     </div>
   );
 };
+

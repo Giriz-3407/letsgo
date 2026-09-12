@@ -1,6 +1,6 @@
 import React from 'react';
 import { ControlMode } from '../types';
-import { Settings, Shield, Users, Film, PauseCircle, LogOut } from 'lucide-react';
+import { Film, LogOut } from 'lucide-react';
 
 interface Props {
   isHost: boolean;
@@ -20,93 +20,102 @@ export const RoomControls: React.FC<Props> = ({
   onLeaveRoom,
 }) => {
   return (
-    <div className="bg-slate-900/80 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-lg space-y-4">
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <Settings className="w-4 h-4 text-blue-400" />
-          <h3 className="text-sm font-semibold text-slate-200">Room Controls</h3>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+        <h3 className="text-xs font-semibold tracking-wide uppercase text-neutral-400">
+          Room Settings
+        </h3>
         <button
           onClick={onLeaveRoom}
-          className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 transition"
+          className="text-xs text-neutral-400 hover:text-rose-400 flex items-center gap-1.5 transition-colors py-1"
         >
           <LogOut className="w-3.5 h-3.5" />
-          <span>Leave</span>
+          <span>Leave room</span>
         </button>
       </div>
 
       {isHost ? (
-        <div className="space-y-3.5 text-xs">
-          {/* Change Video Button */}
-          <button
-            onClick={onOpenVideoPicker}
-            className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-medium transition flex items-center justify-center gap-2 border border-slate-700"
-          >
-            <Film className="w-4 h-4 text-blue-400" />
-            <span>Change Video</span>
-          </button>
+        <div className="space-y-4 text-xs">
+          {/* Change Video Action */}
+          <div>
+            <label className="text-[11px] font-medium text-neutral-400 block mb-1.5 uppercase tracking-wide">
+              Media
+            </label>
+            <button
+              onClick={onOpenVideoPicker}
+              className="w-full h-9 px-3 bg-white/[0.05] hover:bg-white/[0.1] text-neutral-200 hover:text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border border-white/[0.08]"
+            >
+              <Film className="w-3.5 h-3.5 text-neutral-400" />
+              <span>Change video</span>
+            </button>
+          </div>
 
-          {/* Control Mode */}
+          {/* Control Mode Segmented Control */}
           <div className="space-y-1.5">
-            <span className="text-slate-400 font-medium block">Who can control playback:</span>
-            <div className="grid grid-cols-2 gap-2">
+            <label className="text-[11px] font-medium text-neutral-400 block uppercase tracking-wide">
+              Playback Control
+            </label>
+            <div className="grid grid-cols-2 gap-1 p-1 bg-white/[0.03] border border-white/[0.06] rounded-lg">
               <button
                 type="button"
                 onClick={() => onUpdateSettings('HOST_ONLY', pauseOnBuffer)}
-                className={`py-2 px-2.5 rounded-lg border text-center font-medium transition flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-2 rounded-md text-xs font-medium transition-colors ${
                   controlMode === 'HOST_ONLY'
-                    ? 'bg-blue-950/60 border-blue-600 text-blue-300 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-white text-black shadow-sm'
+                    : 'text-neutral-400 hover:text-neutral-200'
                 }`}
               >
-                <Shield className="w-3.5 h-3.5 text-blue-400" />
-                <span>Host Only</span>
+                Host only
               </button>
 
               <button
                 type="button"
                 onClick={() => onUpdateSettings('EVERYONE', pauseOnBuffer)}
-                className={`py-2 px-2.5 rounded-lg border text-center font-medium transition flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-2 rounded-md text-xs font-medium transition-colors ${
                   controlMode === 'EVERYONE'
-                    ? 'bg-blue-950/60 border-blue-600 text-blue-300 shadow-sm'
-                    : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-white text-black shadow-sm'
+                    : 'text-neutral-400 hover:text-neutral-200'
                 }`}
               >
-                <Users className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Everyone</span>
+                Everyone
               </button>
             </div>
           </div>
 
           {/* Pause on Buffer Toggle */}
           <div className="flex items-center justify-between pt-1">
-            <div className="flex items-center gap-2 text-slate-300">
-              <PauseCircle className="w-4 h-4 text-slate-400" />
-              <span>Pause everyone if someone buffers</span>
+            <div className="space-y-0.5">
+              <span className="text-neutral-300 font-medium block text-xs">
+                Pause on buffering
+              </span>
+              <span className="text-[11px] text-neutral-500 block leading-tight">
+                Pause room if someone buffers
+              </span>
             </div>
             <input
               type="checkbox"
               checked={pauseOnBuffer}
               onChange={(e) => onUpdateSettings(controlMode, e.target.checked)}
-              className="w-4 h-4 rounded text-blue-600 bg-slate-950 border-slate-700 focus:ring-blue-600 cursor-pointer"
+              className="w-4 h-4 rounded accent-white bg-[#121215] border-white/20 cursor-pointer"
             />
           </div>
         </div>
       ) : (
-        <div className="space-y-2 text-xs text-slate-400">
-          <div className="flex items-center justify-between p-2 rounded-lg bg-slate-950/40 border border-slate-800/80">
-            <span>Playback Control:</span>
-            <span className="font-semibold text-slate-200">
-              {controlMode === 'HOST_ONLY' ? 'Host Only' : 'Everyone'}
+        <div className="space-y-3 text-xs">
+          <div className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-between">
+            <span className="text-neutral-400">Playback control:</span>
+            <span className="font-medium text-neutral-200">
+              {controlMode === 'HOST_ONLY' ? 'Host only' : 'Everyone'}
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-neutral-500 leading-relaxed">
             {controlMode === 'HOST_ONLY'
-              ? 'Only the host can play, pause, seek, or change video.'
-              : 'All room participants can play, pause, or seek.'}
+              ? 'Only the room host can play, pause, seek, or change video.'
+              : 'All participants can control playback.'}
           </p>
         </div>
       )}
     </div>
   );
 };
+

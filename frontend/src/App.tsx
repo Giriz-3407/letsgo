@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Home } from './pages/Home';
 import { CreateRoom } from './pages/CreateRoom';
+import { JoinRoom } from './pages/JoinRoom';
 import { WatchRoom } from './pages/WatchRoom';
 
 export const App: React.FC = () => {
@@ -20,6 +21,8 @@ export const App: React.FC = () => {
       setCurrentRoomId(searchParams.get('room')!.toUpperCase());
     } else if (path === '/create') {
       setCurrentPage('create');
+    } else if (path === '/join') {
+      setCurrentPage('join');
     } else {
       setCurrentPage('home');
     }
@@ -40,6 +43,10 @@ export const App: React.FC = () => {
       window.history.pushState({}, '', '/create');
       setCurrentPage('create');
       setCurrentRoomId('');
+    } else if (page === 'join') {
+      window.history.pushState({}, '', '/join');
+      setCurrentPage('join');
+      setCurrentRoomId('');
     } else if (page === 'room' && params?.roomId) {
       const code = params.roomId.toUpperCase();
       window.history.pushState({}, '', `/room/${code}`);
@@ -54,6 +61,10 @@ export const App: React.FC = () => {
 
   if (currentPage === 'create') {
     return <CreateRoom onNavigate={navigate} />;
+  }
+
+  if (currentPage === 'join') {
+    return <JoinRoom onNavigate={navigate} />;
   }
 
   return <Home onNavigate={navigate} />;

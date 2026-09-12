@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ControlMode, VideoMetadata } from '../types';
 import { api, SessionStatus } from '../api/client';
 import { DriveFilePickerModal } from '../components/DriveFilePickerModal';
-import { ArrowLeft, Film, Shield, Users, Cloud, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Film, Loader2 } from 'lucide-react';
 
 interface Props {
   onNavigate: (page: string, params?: Record<string, string>) => void;
@@ -21,7 +21,6 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load session status and pre-select default sample video if available
     api.getSessionStatus()
       .then((s) => setSession(s))
       .catch(console.warn);
@@ -59,80 +58,109 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center px-4 py-8">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <button
-            onClick={() => onNavigate('home')}
-            className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1.5 transition"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back</span>
-          </button>
-          <h2 className="text-base font-bold text-slate-100">Create Watch Room</h2>
-          <div className="w-8" />
+    <div className="min-h-screen bg-[#09090b] text-neutral-100 flex flex-col justify-between px-6 py-8 selection:bg-neutral-800 selection:text-neutral-100">
+      {/* Top Bar */}
+      <header className="max-w-xl mx-auto w-full flex items-center justify-between">
+        <button
+          onClick={() => onNavigate('home')}
+          className="group inline-flex items-center gap-2 text-xs font-medium text-neutral-400 hover:text-neutral-100 transition-colors py-1.5"
+        >
+          <ArrowLeft className="w-3.5 h-3.5 transition-transform group-hover:-translate-x-0.5" />
+          <span>Back</span>
+        </button>
+
+        <span
+          onClick={() => onNavigate('home')}
+          className="text-sm font-medium tracking-tight text-neutral-300 hover:text-white cursor-pointer transition-colors"
+        >
+          WatchTogether
+        </span>
+
+        <div className="w-12" />
+      </header>
+
+      {/* Main Setup View */}
+      <main className="max-w-lg mx-auto w-full my-auto py-8">
+        <div className="mb-8">
+          <h1 className="text-2xl font-semibold tracking-tight text-neutral-100">
+            Create a room
+          </h1>
+          <p className="text-xs text-neutral-400 mt-1">
+            Configure your session and choose a movie to watch.
+          </p>
         </div>
 
         {error && (
-          <div className="p-3 bg-rose-950/50 border border-rose-800/80 rounded-xl text-rose-300 text-xs">
+          <div className="mb-6 p-3 bg-rose-950/40 border border-rose-900/50 rounded-lg text-rose-300 text-xs">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5 text-xs">
-          {/* Host Display Name */}
-          <div className="space-y-1.5">
-            <label className="text-slate-300 font-medium block">Your Display Name</label>
-            <input
-              type="text"
-              required
-              value={hostDisplayName}
-              onChange={(e) => setHostDisplayName(e.target.value)}
-              className="w-full py-2.5 px-3 bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl text-slate-100 outline-none transition"
-            />
-          </div>
-
-          {/* Video Selection */}
-          <div className="space-y-1.5">
-            <label className="text-slate-300 font-medium block">Video to Watch</label>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Section: Video to Watch */}
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-neutral-400 block uppercase tracking-wide">
+              Choose something to watch
+            </label>
             <div
               onClick={() => setIsPickerOpen(true)}
-              className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 cursor-pointer transition group"
+              className="group flex items-center justify-between p-3.5 rounded-lg bg-[#111114] border border-white/[0.08] hover:border-white/20 cursor-pointer transition-colors"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-blue-950 border border-blue-800/60 flex items-center justify-center text-blue-400">
+              <div className="flex items-center gap-3 min-w-0 pr-2">
+                <div className="w-8 h-8 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-neutral-400 flex-shrink-0">
                   <Film className="w-4 h-4" />
                 </div>
-                <div>
-                  <h4 className="font-semibold text-slate-200">
+                <div className="min-w-0 truncate">
+                  <h4 className="font-medium text-xs text-neutral-200 truncate group-hover:text-white transition-colors">
                     {selectedVideo ? selectedVideo.name : 'No video selected'}
                   </h4>
-                  <span className="text-[11px] text-slate-500">
+                  <span className="text-[11px] text-neutral-500 block">
                     {selectedVideo
-                      ? `${selectedVideo.provider.toUpperCase()} • ${
+                      ? `${selectedVideo.provider.toUpperCase()} &bull; ${
                           selectedVideo.size ? `${(selectedVideo.size / (1024 * 1024)).toFixed(1)} MB` : 'Stream'
                         }`
-                      : 'Click to choose media or connect Google Drive'}
+                      : 'Click to select media or connect Google Drive'}
                   </span>
                 </div>
               </div>
 
-              <span className="text-[11px] text-blue-400 group-hover:underline font-medium">
+              <span className="text-xs text-neutral-400 group-hover:text-white font-medium transition-colors flex-shrink-0">
                 Change
               </span>
             </div>
           </div>
 
-          {/* Playback Control Mode */}
+          {/* Divider */}
+          <div className="border-t border-white/[0.06]" />
+
+          {/* Section: Your Name */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-neutral-400 block uppercase tracking-wide">
+              Your name
+            </label>
+            <input
+              type="text"
+              required
+              value={hostDisplayName}
+              onChange={(e) => setHostDisplayName(e.target.value)}
+              className="w-full h-11 px-3.5 bg-[#121215] border border-white/[0.08] focus:border-white/30 rounded-lg text-xs text-neutral-100 placeholder:text-neutral-600 outline-none transition-colors"
+            />
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-white/[0.06]" />
+
+          {/* Section: Playback Control Mode */}
           <div className="space-y-2">
-            <label className="text-slate-300 font-medium block">Who Can Control Playback?</label>
-            <div className="grid grid-cols-2 gap-2.5">
+            <label className="text-[11px] font-medium text-neutral-400 block uppercase tracking-wide">
+              Playback permissions
+            </label>
+            <div className="grid grid-cols-2 gap-2">
               <label
-                className={`p-3 rounded-xl border flex flex-col items-center gap-1.5 cursor-pointer transition ${
+                className={`p-3 rounded-lg border flex flex-col gap-1 cursor-pointer transition-colors ${
                   controlMode === 'HOST_ONLY'
-                    ? 'bg-blue-950/50 border-blue-600 text-blue-200 shadow-sm'
-                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                    ? 'bg-white/[0.08] border-white/30 text-white'
+                    : 'bg-[#111114] border-white/[0.08] text-neutral-400 hover:border-white/15'
                 }`}
               >
                 <input
@@ -143,18 +171,17 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
                   onChange={() => setControlMode('HOST_ONLY')}
                   className="hidden"
                 />
-                <Shield className="w-4 h-4 text-blue-400" />
-                <span className="font-semibold text-xs">Host Only</span>
-                <span className="text-[10px] text-slate-500 text-center">
+                <span className="font-medium text-xs text-neutral-200">Host only</span>
+                <span className="text-[11px] text-neutral-500 leading-tight">
                   Only you can play, pause, or seek
                 </span>
               </label>
 
               <label
-                className={`p-3 rounded-xl border flex flex-col items-center gap-1.5 cursor-pointer transition ${
+                className={`p-3 rounded-lg border flex flex-col gap-1 cursor-pointer transition-colors ${
                   controlMode === 'EVERYONE'
-                    ? 'bg-blue-950/50 border-blue-600 text-blue-200 shadow-sm'
-                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                    ? 'bg-white/[0.08] border-white/30 text-white'
+                    : 'bg-[#111114] border-white/[0.08] text-neutral-400 hover:border-white/15'
                 }`}
               >
                 <input
@@ -165,48 +192,57 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
                   onChange={() => setControlMode('EVERYONE')}
                   className="hidden"
                 />
-                <Users className="w-4 h-4 text-emerald-400" />
-                <span className="font-semibold text-xs">Everyone</span>
-                <span className="text-[10px] text-slate-500 text-center">
+                <span className="font-medium text-xs text-neutral-200">Everyone</span>
+                <span className="text-[11px] text-neutral-500 leading-tight">
                   Any viewer can control player
                 </span>
               </label>
             </div>
           </div>
 
-          {/* Pause on Buffer Setting */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <div>
-              <span className="text-slate-200 font-medium block">Pause on Buffering</span>
-              <span className="text-[11px] text-slate-500">
-                Pause the room if any participant is buffering (Default: Off)
+          {/* Divider */}
+          <div className="border-t border-white/[0.06]" />
+
+          {/* Section: Buffering Behavior */}
+          <div className="flex items-center justify-between py-1">
+            <div className="space-y-0.5">
+              <span className="text-xs font-medium text-neutral-200 block">Pause on buffering</span>
+              <span className="text-[11px] text-neutral-500 block">
+                Pause the room if any participant is buffering
               </span>
             </div>
             <input
               type="checkbox"
               checked={pauseOnBuffer}
               onChange={(e) => setPauseOnBuffer(e.target.checked)}
-              className="w-4 h-4 rounded text-blue-600 bg-slate-950 border-slate-700 focus:ring-blue-600 cursor-pointer"
+              className="w-4 h-4 rounded accent-white bg-[#121215] border-white/20 cursor-pointer"
             />
           </div>
 
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-blue-950"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Creating Room...</span>
-              </>
-            ) : (
-              <span>Launch Watch Room</span>
-            )}
-          </button>
+          {/* Submit Action */}
+          <div className="pt-4">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full h-11 bg-white hover:bg-neutral-200 disabled:opacity-40 disabled:hover:bg-white text-black rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-black" />
+                  <span>Creating room...</span>
+                </>
+              ) : (
+                <span>Create room</span>
+              )}
+            </button>
+          </div>
         </form>
-      </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="text-center text-[11px] text-neutral-600">
+        WatchTogether
+      </footer>
 
       {/* Video Picker Modal */}
       <DriveFilePickerModal
@@ -218,3 +254,4 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
     </div>
   );
 };
+

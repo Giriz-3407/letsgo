@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { VideoMetadata, ControlMode, PlaybackChangeSource } from '../types';
+import { VideoMetadata, PlaybackChangeSource } from '../types';
 import { resolveMediaUrl } from '../config';
 import { PlaybackSynchronizer } from '../sync/PlaybackSynchronizer';
 import {
@@ -10,9 +10,9 @@ import {
   Maximize,
   Minimize,
   Download,
-  AlertCircle,
-  RotateCcw,
+  Shield,
   Loader2,
+  Film,
 } from 'lucide-react';
 
 interface Props {
@@ -100,7 +100,7 @@ export const VideoPlayer: React.FC<Props> = ({
       if (isPlaying) {
         setShowControls(false);
       }
-    }, 3000);
+    }, 2800);
   };
 
   const togglePlayPause = () => {
@@ -169,22 +169,22 @@ export const VideoPlayer: React.FC<Props> = ({
 
   if (!video) {
     return (
-      <div className="w-full aspect-video bg-slate-900 border border-slate-800 rounded-2xl flex flex-col items-center justify-center p-6 text-center shadow-2xl">
-        <div className="w-16 h-16 rounded-2xl bg-blue-950/60 border border-blue-800/60 flex items-center justify-center text-blue-400 mb-4">
-          <Play className="w-8 h-8 ml-1" />
+      <div className="w-full aspect-video bg-[#0d0d10] border border-white/[0.08] rounded-xl flex flex-col items-center justify-center p-8 text-center select-none">
+        <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-neutral-400 mb-4">
+          <Film className="w-5 h-5" />
         </div>
-        <h3 className="text-base font-semibold text-slate-200">No video selected for this room</h3>
-        <p className="text-xs text-slate-400 mt-1 max-w-sm">
+        <h3 className="text-sm font-medium text-neutral-200">No video selected</h3>
+        <p className="text-xs text-neutral-500 mt-1 max-w-xs leading-relaxed">
           {canControl
-            ? 'Select a video from local sample storage, upload an MP4, or choose a file from Google Drive.'
-            : 'Waiting for the room host to select a movie or video...'}
+            ? 'Choose a media file from local storage, upload a file, or connect Google Drive.'
+            : 'Waiting for the host to select something to watch...'}
         </p>
         {canControl && onOpenPicker && (
           <button
             onClick={onOpenPicker}
-            className="mt-4 py-2.5 px-5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition shadow-lg shadow-blue-950"
+            className="mt-5 h-9 px-4 bg-white hover:bg-neutral-200 text-black text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-2"
           >
-            Select Movie
+            <span>Choose media</span>
           </button>
         )}
       </div>
@@ -195,9 +195,9 @@ export const VideoPlayer: React.FC<Props> = ({
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
-      className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden group shadow-2xl border border-slate-800 select-none"
+      className="relative w-full aspect-video bg-black rounded-xl overflow-hidden group border border-white/[0.08] select-none shadow-2xl"
     >
-      {/* Native HTML5 Video Element */}
+      {/* Native Video Element */}
       <video
         ref={videoRef}
         preload="auto"
@@ -207,51 +207,50 @@ export const VideoPlayer: React.FC<Props> = ({
         onClick={togglePlayPause}
       />
 
-      {/* Buffering Spinner Overlay */}
+      {/* Buffering Indicator */}
       {isBuffering && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
-          <Loader2 className="w-10 h-10 text-blue-400 animate-spin" />
-          <span className="text-xs font-medium text-slate-200 mt-2">Buffering stream...</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none z-10">
+          <Loader2 className="w-8 h-8 text-white/80 animate-spin" />
         </div>
       )}
 
-      {/* Big Center Play/Pause button on Hover/Click */}
+      {/* Center Play/Pause Indicator on Pause */}
       {!isPlaying && !isBuffering && (
         <button
           onClick={togglePlayPause}
           disabled={!canControl}
-          className="absolute inset-0 m-auto w-16 h-16 rounded-full bg-blue-600/90 hover:bg-blue-500 disabled:opacity-40 text-white flex items-center justify-center shadow-xl backdrop-blur-sm transition transform hover:scale-105"
+          className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-black/50 hover:bg-black/70 border border-white/20 disabled:opacity-30 text-white flex items-center justify-center backdrop-blur-md transition-all transform hover:scale-105 z-10"
         >
-          <Play className="w-8 h-8 ml-1 fill-white" />
+          <Play className="w-6 h-6 ml-0.5 fill-white text-white" />
         </button>
       )}
 
-      {/* Permission Warning Overlay if cannot control */}
+      {/* Viewer Permission Badge */}
       {!canControl && showControls && (
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/70 backdrop-blur text-[11px] text-amber-300 border border-amber-800/40">
-          <AlertCircle className="w-3.5 h-3.5" />
-          <span>Host-Only Control Active</span>
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-white/10 text-[11px] text-neutral-300">
+          <Shield className="w-3 h-3 text-neutral-400" />
+          <span>Host controls playback</span>
         </div>
       )}
 
       {/* Bottom Control Bar */}
       <div
-        className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 transition-opacity duration-200 ${
+        className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent pt-10 pb-3 px-4 transition-opacity duration-200 z-20 ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        {/* Timeline Scrub Bar */}
-        <div className="relative group/timeline w-full h-3 flex items-center mb-2 cursor-pointer">
-          {/* Track background */}
-          <div className="w-full h-1.5 bg-slate-700/60 rounded-full overflow-hidden relative">
+        {/* Timeline Bar */}
+        <div className="relative group/timeline w-full h-3 flex items-center mb-2.5 cursor-pointer">
+          {/* Progress background track */}
+          <div className="w-full h-1 group-hover/timeline:h-1.5 bg-white/20 rounded-full overflow-hidden relative transition-all">
             {/* Buffer progress */}
             <div
-              className="absolute left-0 top-0 bottom-0 bg-slate-500/50 transition-all duration-150"
+              className="absolute left-0 top-0 bottom-0 bg-white/20 transition-all duration-150"
               style={{ width: `${bufferedPercentage}%` }}
             />
             {/* Playback progress */}
             <div
-              className="absolute left-0 top-0 bottom-0 bg-blue-500"
+              className="absolute left-0 top-0 bottom-0 bg-white"
               style={{ width: `${currentPercentage}%` }}
             />
           </div>
@@ -269,38 +268,38 @@ export const VideoPlayer: React.FC<Props> = ({
           />
         </div>
 
-        {/* Buttons Row */}
-        <div className="flex items-center justify-between text-slate-200">
+        {/* Controls Row */}
+        <div className="flex items-center justify-between text-neutral-200">
           <div className="flex items-center gap-3">
             {/* Play / Pause */}
             <button
               onClick={togglePlayPause}
               disabled={!canControl}
               title={canControl ? (isPlaying ? 'Pause' : 'Play') : 'Host only control'}
-              className="p-2 hover:bg-white/10 disabled:opacity-40 rounded-lg transition"
+              className="p-1.5 text-neutral-200 hover:text-white disabled:opacity-30 rounded transition-colors"
             >
               {isPlaying ? (
-                <Pause className="w-5 h-5 fill-current" />
+                <Pause className="w-4 h-4 fill-current" />
               ) : (
-                <Play className="w-5 h-5 fill-current ml-0.5" />
+                <Play className="w-4 h-4 fill-current ml-0.5" />
               )}
             </button>
 
             {/* Timestamps */}
-            <div className="text-xs font-mono text-slate-300">
+            <div className="text-[11px] font-mono text-neutral-300 select-none">
               <span>{formatTime(currentTime)}</span>
-              <span className="text-slate-500 mx-1">/</span>
-              <span className="text-slate-400">{formatTime(duration)}</span>
+              <span className="text-neutral-600 mx-1.5">/</span>
+              <span className="text-neutral-400">{formatTime(duration)}</span>
             </div>
 
             {/* Volume */}
-            <div className="flex items-center gap-1.5 ml-2 group/volume">
+            <div className="flex items-center gap-1.5 ml-1">
               <button
                 onClick={toggleMute}
-                className="p-1.5 hover:bg-white/10 rounded-lg transition"
+                className="p-1.5 text-neutral-300 hover:text-white rounded transition-colors"
               >
                 {isMuted || volume === 0 ? (
-                  <VolumeX className="w-4 h-4 text-slate-400" />
+                  <VolumeX className="w-4 h-4 text-neutral-400" />
                 ) : (
                   <Volume2 className="w-4 h-4" />
                 )}
@@ -312,19 +311,19 @@ export const VideoPlayer: React.FC<Props> = ({
                 step={0.05}
                 value={isMuted ? 0 : volume}
                 onChange={handleVolumeChange}
-                className="w-16 h-1 bg-slate-700 accent-blue-500 rounded-lg cursor-pointer"
+                className="w-14 h-1 bg-white/20 accent-white rounded cursor-pointer"
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {/* Download video button if allowed */}
             {video.downloadUrl && (
               <a
                 href={resolveMediaUrl(video.downloadUrl)}
                 download
-                title="Download video file"
-                className="p-2 hover:bg-white/10 rounded-lg transition text-slate-300 hover:text-white"
+                title="Download video"
+                className="p-1.5 text-neutral-400 hover:text-white rounded transition-colors"
               >
                 <Download className="w-4 h-4" />
               </a>
@@ -333,7 +332,8 @@ export const VideoPlayer: React.FC<Props> = ({
             {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
-              className="p-2 hover:bg-white/10 rounded-lg transition"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              className="p-1.5 text-neutral-400 hover:text-white rounded transition-colors"
             >
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
             </button>
