@@ -1,0 +1,24 @@
+# Python byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+env/
+venv/
+
+# Environment configuration
+.env
+
+# Node dependencies & frontend build artifacts
+node_modules/
+.vite/
+dist/
+build/
+*.log
+
+# Operating System & IDE metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
