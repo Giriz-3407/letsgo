@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { RoomState, VideoMetadata, ControlMode, SyncStatus } from '../types';
+import { RoomState, ControlMode, SyncStatus } from '../types';
 import { ClockSynchronizer } from '../sync/ClockSynchronizer';
 import { WebSocketRoomClient } from '../sync/WebSocketRoomClient';
 import { PlaybackSynchronizer, SyncStats } from '../sync/PlaybackSynchronizer';
@@ -8,18 +8,15 @@ import { ParticipantList } from '../components/ParticipantList';
 import { RoomControls } from '../components/RoomControls';
 import { SyncStatusBadge } from '../components/SyncStatusBadge';
 import { DebugPanel } from '../components/DebugPanel';
-import { DriveFilePickerModal } from '../components/DriveFilePickerModal';
 import { api } from '../api/client';
 import {
   ArrowLeft,
   Copy,
   Check,
-  Users,
   Sliders,
   Terminal,
   X,
   Loader2,
-  Film,
 } from 'lucide-react';
 
 interface Props {
@@ -32,9 +29,9 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
   const [syncStats, setSyncStats] = useState<SyncStats | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('SYNCHRONIZING');
   const [activeDrawer, setActiveDrawer] = useState<'participants' | 'settings' | 'diagnostics' | null>(null);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Stored participant identity
   const currentUserId = useMemo(() => {
@@ -84,8 +81,18 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
 
     unsubs.push(
       wsClient.on('ROOM_STATE', (state: any) => {
-        setRoomState(state);
-        synchronizer.updateRoomState(state);
+        setRoomState((prev) => {
+          // Reject stale state update if an in-flight newer seek or play occurred
+          if (
+            prev?.lastStateChangeServerTime &&
+            state.lastStateChangeServerTime &&
+            state.lastStateChangeServerTime < prev.lastStateChangeServerTime
+          ) {
+            return prev;
+          }
+          synchronizer.updateRoomState(state);
+          return state;
+        });
       })
     );
 
@@ -93,6 +100,13 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('PLAY', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
+          if (
+            prev.lastStateChangeServerTime &&
+            msg.serverTime &&
+            msg.serverTime < prev.lastStateChangeServerTime
+          ) {
+            return prev;
+          }
           const updated = {
             ...prev,
             isPlaying: true,
@@ -109,6 +123,13 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('PAUSE', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
+          if (
+            prev.lastStateChangeServerTime &&
+            msg.serverTime &&
+            msg.serverTime < prev.lastStateChangeServerTime
+          ) {
+            return prev;
+          }
           const updated = {
             ...prev,
             isPlaying: false,
@@ -125,6 +146,13 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('SEEK', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
+          if (
+            prev.lastStateChangeServerTime &&
+            msg.serverTime &&
+            msg.serverTime < prev.lastStateChangeServerTime
+          ) {
+            return prev;
+          }
           const updated = {
             ...prev,
             isPlaying: msg.isPlaying !== undefined ? msg.isPlaying : prev.isPlaying,
@@ -141,6 +169,13 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('PLAYBACK_RATE', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
+          if (
+            prev.lastStateChangeServerTime &&
+            msg.serverTime &&
+            msg.serverTime < prev.lastStateChangeServerTime
+          ) {
+            return prev;
+          }
           const updated = {
             ...prev,
             playbackRate: msg.rate,
@@ -261,15 +296,6 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
     }
   };
 
-  const handleSelectVideo = async (video: VideoMetadata) => {
-    if (!isHost) return;
-    try {
-      await api.setRoomVideo(roomId, video.id, currentUserId);
-    } catch (err: any) {
-      setError(err.message || 'Failed to change video');
-    }
-  };
-
   const handleLeave = () => {
     onNavigate('home');
   };
@@ -347,14 +373,14 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
         {/* Dominant Movie Player */}
         <div className="w-full max-w-5xl">
           <VideoPlayer
-            video={roomState?.video || null}
             synchronizer={synchronizer}
             canControl={canControl}
             playbackRate={roomState?.playbackRate ?? 1.0}
             onPlaybackRateChange={(rate) => {
               synchronizer.requestPlaybackRate(rate);
             }}
-            onOpenPicker={() => setIsPickerOpen(true)}
+            selectedFileName={selectedFile?.name}
+            onFileSelect={(file) => setSelectedFile(file)}
           />
         </div>
 
@@ -364,28 +390,24 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
           <div className="space-y-1.5 min-w-0 pr-4">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-medium text-neutral-100 truncate">
-                {roomState?.video ? roomState.video.name : 'No movie playing'}
+                {selectedFile ? selectedFile.name : (roomState?.video ? roomState.video.name : 'No video selected')}
               </h2>
-              {isHost && (
-                <button
-                  onClick={() => setIsPickerOpen(true)}
-                  className="text-[11px] text-neutral-400 hover:text-white transition-colors underline flex-shrink-0"
-                >
-                  Change
-                </button>
-              )}
             </div>
 
             <div className="flex items-center gap-2 text-xs text-neutral-500">
-              {roomState?.video?.size && (
+              {selectedFile ? (
                 <>
-                  <span>{(roomState.video.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  <span>{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
                   <span>&bull;</span>
+                  <span className="uppercase tracking-wider text-[10px] text-emerald-400 font-mono">
+                    Local Playback
+                  </span>
                 </>
+              ) : (
+                <span className="text-[11px] text-neutral-500">
+                  Select your local copy of the movie to begin watching in sync
+                </span>
               )}
-              <span className="uppercase tracking-wider text-[10px]">
-                {roomState?.video ? roomState.video.provider : 'Standby'}
-              </span>
             </div>
           </div>
 
@@ -474,7 +496,9 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
                   pauseOnBuffer={roomState?.pauseOnBuffer || false}
                   onUpdateSettings={handleUpdateSettings}
                   onOpenVideoPicker={() => {
-                    setIsPickerOpen(true);
+                    // Trigger the file picker input in video player
+                    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+                    fileInput?.click();
                     setActiveDrawer(null);
                   }}
                   onLeaveRoom={handleLeave}
@@ -489,15 +513,6 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       <footer className="py-4 text-center text-[11px] text-neutral-600 border-t border-white/[0.04]">
         WatchTogether
       </footer>
-
-      {/* Video Picker Modal */}
-      <DriveFilePickerModal
-        isOpen={isPickerOpen}
-        onClose={() => setIsPickerOpen(false)}
-        currentVideoId={roomState?.video?.id}
-        onSelectVideo={handleSelectVideo}
-      />
     </div>
   );
 };
-

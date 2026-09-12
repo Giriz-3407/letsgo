@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { ControlMode, VideoMetadata } from '../types';
-import { api, SessionStatus } from '../api/client';
-import { DriveFilePickerModal } from '../components/DriveFilePickerModal';
+import React, { useState } from 'react';
+import { ControlMode } from '../types';
+import { api } from '../api/client';
 import { ArrowLeft, Film, Loader2 } from 'lucide-react';
 
 interface Props {
@@ -14,25 +13,8 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
   );
   const [controlMode, setControlMode] = useState<ControlMode>('HOST_ONLY');
   const [pauseOnBuffer, setPauseOnBuffer] = useState(false);
-  const [selectedVideo, setSelectedVideo] = useState<VideoMetadata | null>(null);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const [session, setSession] = useState<SessionStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.getSessionStatus()
-      .then((s) => setSession(s))
-      .catch(console.warn);
-
-    api.listVideos()
-      .then((vids) => {
-        if (vids.length > 0 && !selectedVideo) {
-          setSelectedVideo(vids[0]);
-        }
-      })
-      .catch(console.warn);
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +26,6 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
       const res = await api.createRoom({
         hostDisplayName,
         controlMode,
-        videoId: selectedVideo?.id,
         pauseOnBuffer,
       });
 
@@ -86,7 +67,7 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
             Create a room
           </h1>
           <p className="text-xs text-neutral-400 mt-1">
-            Configure your session and choose a movie to watch.
+            Configure your session. You and your friends will select your local video file in the room.
           </p>
         </div>
 
@@ -97,35 +78,17 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Section: Video to Watch */}
-          <div className="space-y-2">
-            <label className="text-[11px] font-medium text-neutral-400 block uppercase tracking-wide">
-              Choose something to watch
-            </label>
-            <div
-              onClick={() => setIsPickerOpen(true)}
-              className="group flex items-center justify-between p-3.5 rounded-lg bg-[#111114] border border-white/[0.08] hover:border-white/20 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center gap-3 min-w-0 pr-2">
-                <div className="w-8 h-8 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-neutral-400 flex-shrink-0">
-                  <Film className="w-4 h-4" />
-                </div>
-                <div className="min-w-0 truncate">
-                  <h4 className="font-medium text-xs text-neutral-200 truncate group-hover:text-white transition-colors">
-                    {selectedVideo ? selectedVideo.name : 'No video selected'}
-                  </h4>
-                  <span className="text-[11px] text-neutral-500 block">
-                    {selectedVideo
-                      ? `${selectedVideo.provider.toUpperCase()} &bull; ${
-                          selectedVideo.size ? `${(selectedVideo.size / (1024 * 1024)).toFixed(1)} MB` : 'Stream'
-                        }`
-                      : 'Click to select media or connect Google Drive'}
-                  </span>
-                </div>
-              </div>
-
-              <span className="text-xs text-neutral-400 group-hover:text-white font-medium transition-colors flex-shrink-0">
-                Change
+          {/* Section: Local Media Info */}
+          <div className="p-3.5 rounded-lg bg-[#111114] border border-white/[0.08] flex items-center gap-3">
+            <div className="w-8 h-8 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-neutral-400 flex-shrink-0">
+              <Film className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="font-medium text-xs text-neutral-200">
+                Local-File Playback Mode
+              </h4>
+              <span className="text-[11px] text-neutral-500 block leading-relaxed mt-0.5">
+                Each participant selects the same movie file from their computer upon joining. Media plays locally without server uploads.
               </span>
             </div>
           </div>
@@ -243,15 +206,6 @@ export const CreateRoom: React.FC<Props> = ({ onNavigate }) => {
       <footer className="text-center text-[11px] text-neutral-600">
         WatchTogether
       </footer>
-
-      {/* Video Picker Modal */}
-      <DriveFilePickerModal
-        isOpen={isPickerOpen}
-        onClose={() => setIsPickerOpen(false)}
-        currentVideoId={selectedVideo?.id}
-        onSelectVideo={(vid) => setSelectedVideo(vid)}
-      />
     </div>
   );
 };
-

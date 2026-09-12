@@ -7,6 +7,7 @@ export class ClockSynchronizer {
   private lastRtt: number = 0;
   private currentOffset: number = 0;
   private maxSamples: number = 5;
+  private lastHandledT1: number = 0;
 
   /**
    * Called when TIME_SYNC_REPLY is received from server.
@@ -15,6 +16,12 @@ export class ClockSynchronizer {
    * @param t4 Client timestamp when reply was received (defaults to Date.now())
    */
   public handleSyncReply(t1: number, serverTime: number, t4: number = Date.now()): void {
+    if (t1 < this.lastHandledT1) {
+      // Ignore stale or out-of-order ping replies
+      return;
+    }
+    this.lastHandledT1 = t1;
+
     const rtt = Math.max(0, t4 - t1);
     this.lastRtt = rtt;
 
@@ -53,5 +60,6 @@ export class ClockSynchronizer {
     this.offsetSamples = [];
     this.lastRtt = 0;
     this.currentOffset = 0;
+    this.lastHandledT1 = 0;
   }
 }

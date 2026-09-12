@@ -1,6 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { VideoMetadata, PlaybackChangeSource } from '../types';
-import { resolveMediaUrl } from '../config';
+import { PlaybackChangeSource } from '../types';
 import { PlaybackSynchronizer } from '../sync/PlaybackSynchronizer';
 import {
   Play,
@@ -9,12 +8,12 @@ import {
   VolumeX,
   Maximize,
   Minimize,
-  Download,
   Shield,
   Loader2,
   Film,
   ChevronDown,
   Check,
+  FolderOpen,
 } from 'lucide-react';
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -76,24 +75,35 @@ const RotateRight10Icon: React.FC<{ className?: string }> = ({ className = 'w-4 
 );
 
 interface Props {
-  video: VideoMetadata | null;
   synchronizer: PlaybackSynchronizer | null;
   canControl: boolean;
   playbackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
-  onOpenPicker?: () => void;
+  selectedFileName?: string | null;
+  onFileSelect?: (file: File | null) => void;
+  videoSrc?: string | null;
 }
 
 export const VideoPlayer: React.FC<Props> = ({
-  video,
   synchronizer,
   canControl,
   playbackRate = 1.0,
   onPlaybackRateChange,
-  onOpenPicker,
+  selectedFileName,
+  onFileSelect,
+  videoSrc,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Local object URL & filename state
+  const [internalObjectUrl, setInternalObjectUrl] = useState<string | null>(null);
+  const [internalFileName, setInternalFileName] = useState<string | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+
+  const activeSrc = videoSrc !== undefined ? videoSrc : internalObjectUrl;
+  const activeFileName = selectedFileName !== undefined ? selectedFileName : internalFileName;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -107,16 +117,53 @@ export const VideoPlayer: React.FC<Props> = ({
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const controlsTimeoutRef = useRef<number | null>(null);
   const speedMenuRef = useRef<HTMLDivElement | null>(null);
-  const pendingSeekTimeRef = useRef<number | null>(null);
+
+  // Handle local video file selection
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Revoke previous object URL if any
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+
+    // Stop and reset previous video element
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+    }
+
+    // Create local object URL
+    const newUrl = URL.createObjectURL(file);
+    objectUrlRef.current = newUrl;
+    setInternalObjectUrl(newUrl);
+    setInternalFileName(file.name);
+    onFileSelect?.(file);
+
+    // Reset input value so selecting the same file triggers change if desired
+    e.target.value = '';
+  };
+
+  // Cleanup object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    };
+  }, []);
 
   // Attach video element to PlaybackSynchronizer
   useEffect(() => {
-    if (!videoRef.current || !synchronizer) return;
+    if (!videoRef.current || !synchronizer || !activeSrc) return;
     const detach = synchronizer.attachVideo(videoRef.current);
     return () => {
       detach();
     };
-  }, [synchronizer, video?.streamUrl]);
+  }, [synchronizer, activeSrc]);
 
   // Video event listeners for local UI state
   useEffect(() => {
@@ -137,9 +184,6 @@ export const VideoPlayer: React.FC<Props> = ({
     const onWaiting = () => setIsBuffering(true);
     const onPlaying = () => setIsBuffering(false);
     const onCanPlay = () => setIsBuffering(false);
-    const onSeeked = () => {
-      pendingSeekTimeRef.current = null;
-    };
 
     el.addEventListener('play', onPlay);
     el.addEventListener('pause', onPause);
@@ -148,7 +192,6 @@ export const VideoPlayer: React.FC<Props> = ({
     el.addEventListener('waiting', onWaiting);
     el.addEventListener('playing', onPlaying);
     el.addEventListener('canplay', onCanPlay);
-    el.addEventListener('seeked', onSeeked);
 
     return () => {
       el.removeEventListener('play', onPlay);
@@ -158,9 +201,8 @@ export const VideoPlayer: React.FC<Props> = ({
       el.removeEventListener('waiting', onWaiting);
       el.removeEventListener('playing', onPlaying);
       el.removeEventListener('canplay', onCanPlay);
-      el.removeEventListener('seeked', onSeeked);
     };
-  }, []);
+  }, [activeSrc]);
 
   // Close speed menu on outside click or Escape key
   useEffect(() => {
@@ -209,34 +251,27 @@ export const VideoPlayer: React.FC<Props> = ({
     }
   };
 
+  // Synchronized seek (+10 / -10)
   const handleSkip = (deltaSeconds: number) => {
-    if (!canControl || !videoRef.current || !synchronizer) return;
-    const dur = videoRef.current.duration;
+    if (!canControl || !synchronizer) return;
+    const dur = videoRef.current?.duration || duration || 0;
     const maxTime = !dur || isNaN(dur) || !isFinite(dur) ? 0 : dur;
-    const baseTime =
-      pendingSeekTimeRef.current !== null
-        ? pendingSeekTimeRef.current
-        : videoRef.current.currentTime || 0;
+    const baseTime = videoRef.current?.currentTime ?? currentTime ?? 0;
     const target =
       maxTime > 0
         ? Math.max(0, Math.min(maxTime, baseTime + deltaSeconds))
         : Math.max(0, baseTime + deltaSeconds);
 
-    pendingSeekTimeRef.current = target;
-    synchronizer.notifyUserSeek(target);
-    synchronizer.setChangeSource(PlaybackChangeSource.USER);
-    videoRef.current.currentTime = target;
     setCurrentTime(target);
+    synchronizer.requestSeek(target);
   };
 
+  // Synchronized manual seek slider
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!canControl || !videoRef.current || !synchronizer) return;
-    pendingSeekTimeRef.current = null;
+    if (!canControl || !synchronizer) return;
     const target = parseFloat(e.target.value);
-    synchronizer.notifyUserSeek(target);
-    synchronizer.setChangeSource(PlaybackChangeSource.USER);
-    videoRef.current.currentTime = target;
     setCurrentTime(target);
+    synchronizer.requestSeek(target);
   };
 
   const currentSpeed = playbackRate ?? (synchronizer?.getUserPlaybackRate() || 1.0);
@@ -251,10 +286,10 @@ export const VideoPlayer: React.FC<Props> = ({
     }
   };
 
-  // Global keyboard shortcuts (Left/Right arrow seek 10s)
+  // Global keyboard shortcuts (Left/Right arrow seek 10s, Space toggle play)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (!canControl || !video) return;
+      if (!activeSrc) return;
 
       const activeEl = document.activeElement;
       if (
@@ -268,11 +303,17 @@ export const VideoPlayer: React.FC<Props> = ({
       }
 
       if (e.key === 'ArrowLeft') {
+        if (!canControl) return;
         e.preventDefault();
         handleSkip(-10);
       } else if (e.key === 'ArrowRight') {
+        if (!canControl) return;
         e.preventDefault();
         handleSkip(10);
+      } else if (e.key === ' ' || e.code === 'Space') {
+        if (!canControl) return;
+        e.preventDefault();
+        togglePlayPause();
       }
     };
 
@@ -280,7 +321,7 @@ export const VideoPlayer: React.FC<Props> = ({
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown);
     };
-  }, [canControl, video, duration]);
+  }, [canControl, activeSrc, duration, currentTime]);
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
@@ -328,26 +369,30 @@ export const VideoPlayer: React.FC<Props> = ({
   const bufferedPercentage = duration > 0 ? (bufferedEnd / duration) * 100 : 0;
   const currentPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-  if (!video) {
+  // Render file selection placeholder when no local video is selected
+  if (!activeSrc) {
     return (
-      <div className="w-full aspect-video bg-[#0d0d10] border border-white/[0.08] rounded-xl flex flex-col items-center justify-center p-8 text-center select-none">
+      <div className="w-full aspect-video bg-[#0d0d10] border border-white/[0.08] rounded-xl flex flex-col items-center justify-center p-8 text-center select-none shadow-2xl">
         <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-neutral-400 mb-4">
           <Film className="w-5 h-5" />
         </div>
-        <h3 className="text-sm font-medium text-neutral-200">No video selected</h3>
-        <p className="text-xs text-neutral-500 mt-1 max-w-xs leading-relaxed">
-          {canControl
-            ? 'Choose a media file from local storage, upload a file, or connect Google Drive.'
-            : 'Waiting for the host to select something to watch...'}
+        <h3 className="text-sm font-medium text-neutral-200">
+          Select the video file to start watching.
+        </h3>
+        <p className="text-xs text-neutral-500 mt-1.5 max-w-sm leading-relaxed">
+          Each participant selects their own copy of the video file from their computer. The video plays locally and stays in sync.
         </p>
-        {canControl && onOpenPicker && (
-          <button
-            onClick={onOpenPicker}
-            className="mt-5 h-9 px-4 bg-white hover:bg-neutral-200 text-black text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-2"
-          >
-            <span>Choose media</span>
-          </button>
-        )}
+        <label className="mt-6 h-9 px-5 bg-white hover:bg-neutral-200 text-black text-xs font-semibold rounded-lg transition-colors inline-flex items-center gap-2 cursor-pointer shadow-sm">
+          <FolderOpen className="w-4 h-4 text-black" />
+          <span>Select Video</span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="video/*"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+        </label>
       </div>
     );
   }
@@ -358,12 +403,21 @@ export const VideoPlayer: React.FC<Props> = ({
       onMouseMove={handleMouseMove}
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden group border border-white/[0.08] select-none shadow-2xl"
     >
+      {/* Hidden file input to allow replacing the video */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/*"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
       {/* Native Video Element */}
       <video
         ref={videoRef}
         preload="auto"
         playsInline
-        src={resolveMediaUrl(video.streamUrl)}
+        src={activeSrc}
         className="w-full h-full object-contain cursor-pointer"
         onClick={togglePlayPause}
       />
@@ -391,6 +445,23 @@ export const VideoPlayer: React.FC<Props> = ({
         <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-white/10 text-[11px] text-neutral-300">
           <Shield className="w-3 h-3 text-neutral-400" />
           <span>Host controls playback</span>
+        </div>
+      )}
+
+      {/* Unobtrusive Selected File Badge */}
+      {activeFileName && showControls && (
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-white/10 text-[11px] text-neutral-300">
+          <Film className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+          <span className="font-mono text-neutral-300 max-w-[200px] truncate" title={activeFileName}>
+            {activeFileName}
+          </span>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="text-[10px] text-neutral-400 hover:text-white underline ml-1 cursor-pointer transition-colors flex-shrink-0"
+            title="Choose a different video file"
+          >
+            Change
+          </button>
         </div>
       )}
 
@@ -501,18 +572,6 @@ export const VideoPlayer: React.FC<Props> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Download video button if allowed */}
-            {video.downloadUrl && (
-              <a
-                href={resolveMediaUrl(video.downloadUrl)}
-                download
-                title="Download video"
-                className="p-1.5 text-neutral-400 hover:text-white rounded transition-colors"
-              >
-                <Download className="w-4 h-4" />
-              </a>
-            )}
-
             {/* Playback Speed Popover */}
             <div className="relative" ref={speedMenuRef}>
               <button

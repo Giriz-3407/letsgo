@@ -50,6 +50,11 @@ export class PlaybackSynchronizer {
     this.setupVideoListeners();
     this.startPeriodicDriftCheck();
 
+    // If room state is already present and video metadata is already loaded, synchronize immediately
+    if (this.currentRoomState && videoElement.readyState >= 1 /* HAVE_METADATA */) {
+      this.synchronizeToState(this.currentRoomState, true);
+    }
+
     return () => {
       this.detachVideo();
     };
@@ -74,6 +79,17 @@ export class PlaybackSynchronizer {
     this.userPlaybackRate = rate;
     this.applyEffectivePlaybackRate();
     this.wsClient.sendPlaybackRate(rate);
+    this.publishStats();
+  }
+
+  /**
+   * Request a synchronized seek across the room.
+   * Rebases local expected position and transmits authoritative SEEK to server.
+   * The actual video seek executes when the server broadcasts the authoritative SEEK.
+   */
+  public requestSeek(targetPosition: number): void {
+    this.notifyUserSeek(targetPosition);
+    this.wsClient.sendSeek(targetPosition);
     this.publishStats();
   }
 
@@ -141,8 +157,13 @@ export class PlaybackSynchronizer {
     const rate = this.currentRoomState.playbackRate ?? this.userPlaybackRate ?? 1.0;
     let pos = this.currentRoomState.position + elapsedSec * rate;
 
-    if (this.currentRoomState.video?.duration && pos > this.currentRoomState.video.duration) {
-      pos = this.currentRoomState.video.duration;
+    const maxDuration =
+      this.video && this.video.duration && isFinite(this.video.duration) && this.video.duration > 0
+        ? this.video.duration
+        : this.currentRoomState.video?.duration;
+
+    if (maxDuration && pos > maxDuration) {
+      pos = maxDuration;
     }
     return Math.max(0, pos);
   }
@@ -193,6 +214,11 @@ export class PlaybackSynchronizer {
     if (!this.video) return;
 
     this.currentRoomState = state;
+    this.isUserSeeking = false;
+    this.driftCorrectionFactor = 1.0;
+    this.applyEffectivePlaybackRate();
+    this.lastSeekTime = Date.now();
+
     if (state.playbackRate !== undefined && state.playbackRate !== null) {
       this.userPlaybackRate = state.playbackRate;
     }
@@ -200,16 +226,11 @@ export class PlaybackSynchronizer {
     const drift = Math.abs(targetPosition - this.video.currentTime);
 
     // Only seek if drift is significant (> 1.5s) or explicitly forced with drift > 0.15s.
-    // If the local player is already at the target (e.g. sender who just sought), do NOT re-seek!
+    // If the local player is already at the target, do NOT re-seek!
     const shouldSeek = forceSeek ? (drift > 0.15) : (drift > 1.5);
 
     if (shouldSeek) {
       this.executeProgrammaticSeek(targetPosition, PlaybackChangeSource.REMOTE);
-    } else if (forceSeek) {
-      // Target already matched; reset drift factor and record seek timestamp
-      this.driftCorrectionFactor = 1.0;
-      this.applyEffectivePlaybackRate();
-      this.lastSeekTime = Date.now();
     }
 
     if (state.isPlaying) {
@@ -353,6 +374,14 @@ export class PlaybackSynchronizer {
       this.publishStats();
     });
 
+    // Local video metadata loaded
+    this.video.addEventListener('loadedmetadata', () => {
+      if (this.currentRoomState) {
+        this.synchronizeToState(this.currentRoomState, true);
+      }
+      this.publishStats();
+    });
+
     // Buffering detection
     this.video.addEventListener('waiting', () => {
       this.isBuffering = true;
@@ -364,6 +393,16 @@ export class PlaybackSynchronizer {
       if (this.isBuffering) {
         this.isBuffering = false;
         this.wsClient.sendBuffering(false, this.video?.currentTime);
+      }
+      if (this.currentRoomState?.isPlaying && this.video?.paused) {
+        this.executeProgrammaticPlay();
+      }
+      this.publishStats();
+    });
+
+    this.video.addEventListener('loadeddata', () => {
+      if (this.currentRoomState?.isPlaying && this.video?.paused) {
+        this.executeProgrammaticPlay();
       }
       this.publishStats();
     });
