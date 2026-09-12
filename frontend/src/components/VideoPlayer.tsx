@@ -223,6 +223,7 @@ export const VideoPlayer: React.FC<Props> = ({
         : Math.max(0, baseTime + deltaSeconds);
 
     pendingSeekTimeRef.current = target;
+    synchronizer.notifyUserSeek(target);
     synchronizer.setChangeSource(PlaybackChangeSource.USER);
     videoRef.current.currentTime = target;
     setCurrentTime(target);
@@ -232,6 +233,7 @@ export const VideoPlayer: React.FC<Props> = ({
     if (!canControl || !videoRef.current || !synchronizer) return;
     pendingSeekTimeRef.current = null;
     const target = parseFloat(e.target.value);
+    synchronizer.notifyUserSeek(target);
     synchronizer.setChangeSource(PlaybackChangeSource.USER);
     videoRef.current.currentTime = target;
     setCurrentTime(target);

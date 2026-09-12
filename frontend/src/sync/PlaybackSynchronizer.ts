@@ -29,6 +29,12 @@ export class PlaybackSynchronizer {
   private isBuffering: boolean = false;
   private isUserSeeking: boolean = false;
 
+  // Programmatic action tracking (deterministic, no arbitrary timeouts)
+  private programmaticSeekCount: number = 0;
+  private programmaticPlayCount: number = 0;
+  private programmaticPauseCount: number = 0;
+  private lastSeekTime: number = 0;
+
   // Decoupled playback rate & drift correction
   private userPlaybackRate: number = 1.0;
   private driftCorrectionFactor: number = 1.0;
@@ -79,6 +85,26 @@ export class PlaybackSynchronizer {
     }
   }
 
+  /**
+   * Notifies the synchronizer that a user-initiated seek has begun.
+   * Immediately rebases local expected position and resets drift factor
+   * so drift calculations do not operate against pre-seek position.
+   */
+  public notifyUserSeek(targetPosition: number): void {
+    this.isUserSeeking = true;
+    this.driftCorrectionFactor = 1.0;
+    this.applyEffectivePlaybackRate();
+    this.lastSeekTime = Date.now();
+
+    if (this.currentRoomState) {
+      this.currentRoomState = {
+        ...this.currentRoomState,
+        position: targetPosition,
+        lastStateChangeServerTime: this.clockSync.getEstimatedServerTime(),
+      };
+    }
+  }
+
   public updateRoomState(state: RoomState): void {
     this.currentRoomState = state;
     if (state.playbackRate !== undefined && state.playbackRate !== null) {
@@ -122,6 +148,45 @@ export class PlaybackSynchronizer {
   }
 
   /**
+   * Performs an asynchronous programmatic seek without triggering echo loops.
+   */
+  private executeProgrammaticSeek(targetPosition: number, source: PlaybackChangeSource): void {
+    if (!this.video) return;
+
+    // If already very close to target, skip redundant seek to avoid decoder stutter
+    if (Math.abs(this.video.currentTime - targetPosition) < 0.05) {
+      this.driftCorrectionFactor = 1.0;
+      this.applyEffectivePlaybackRate();
+      this.lastSeekTime = Date.now();
+      return;
+    }
+
+    this.programmaticSeekCount++;
+    this.changeSource = source;
+    this.driftCorrectionFactor = 1.0;
+    this.applyEffectivePlaybackRate();
+    this.lastSeekTime = Date.now();
+    this.video.currentTime = targetPosition;
+  }
+
+  private executeProgrammaticPlay(): void {
+    if (!this.video) return;
+    this.programmaticPlayCount++;
+    this.changeSource = PlaybackChangeSource.REMOTE;
+    this.video.play().catch((err) => {
+      this.programmaticPlayCount = Math.max(0, this.programmaticPlayCount - 1);
+      console.warn('[Sync] Autoplay prevented, waiting for user gesture', err);
+    });
+  }
+
+  private executeProgrammaticPause(): void {
+    if (!this.video) return;
+    this.programmaticPauseCount++;
+    this.changeSource = PlaybackChangeSource.REMOTE;
+    this.video.pause();
+  }
+
+  /**
    * Synchronize local HTML5 video element to authoritative state.
    */
   public synchronizeToState(state: RoomState, forceSeek: boolean = false): void {
@@ -134,46 +199,27 @@ export class PlaybackSynchronizer {
     const targetPosition = this.calculateAuthoritativePosition();
     const drift = Math.abs(targetPosition - this.video.currentTime);
 
-    // If drift is significant (> 1.5s) or explicitly forced (e.g. on late join or seek)
-    if (forceSeek || drift > 1.5) {
-      this.executeProgrammaticChange(PlaybackChangeSource.REMOTE, () => {
-        if (this.video) {
-          this.video.currentTime = targetPosition;
-          this.driftCorrectionFactor = 1.0;
-          this.applyEffectivePlaybackRate();
-        }
-      });
+    // Only seek if drift is significant (> 1.5s) or explicitly forced with drift > 0.15s.
+    // If the local player is already at the target (e.g. sender who just sought), do NOT re-seek!
+    const shouldSeek = forceSeek ? (drift > 0.15) : (drift > 1.5);
+
+    if (shouldSeek) {
+      this.executeProgrammaticSeek(targetPosition, PlaybackChangeSource.REMOTE);
+    } else if (forceSeek) {
+      // Target already matched; reset drift factor and record seek timestamp
+      this.driftCorrectionFactor = 1.0;
+      this.applyEffectivePlaybackRate();
+      this.lastSeekTime = Date.now();
     }
 
     if (state.isPlaying) {
       if (this.video.paused) {
-        this.executeProgrammaticChange(PlaybackChangeSource.REMOTE, () => {
-          this.video?.play().catch((err) => {
-            console.warn('[Sync] Autoplay prevented, waiting for user gesture', err);
-          });
-        });
+        this.executeProgrammaticPlay();
       }
     } else {
       if (!this.video.paused) {
-        this.executeProgrammaticChange(PlaybackChangeSource.REMOTE, () => {
-          this.video?.pause();
-        });
+        this.executeProgrammaticPause();
       }
-    }
-  }
-
-  /**
-   * Programmatic change wrapper that temporarily sets the changeSource to avoid feedback loops.
-   */
-  private executeProgrammaticChange(source: PlaybackChangeSource, action: () => void): void {
-    this.changeSource = source;
-    try {
-      action();
-    } finally {
-      // Allow the DOM event to fire and be ignored, then reset to USER
-      setTimeout(() => {
-        this.changeSource = PlaybackChangeSource.USER;
-      }, 60);
     }
   }
 
@@ -195,7 +241,23 @@ export class PlaybackSynchronizer {
   }
 
   public checkAndCorrectDrift(): void {
-    if (!this.video || !this.currentRoomState || this.isUserSeeking) return;
+    if (!this.video || !this.currentRoomState) return;
+
+    // Suppress drift correction while any seek is in progress
+    if (this.isUserSeeking || this.programmaticSeekCount > 0) {
+      return;
+    }
+
+    // Post-seek stabilization period: suppress drift adjustments for 1.2s after a seek
+    // to allow media decoders to settle and playback to resume smoothly
+    if (Date.now() - this.lastSeekTime < 1200) {
+      if (this.driftCorrectionFactor !== 1.0) {
+        this.driftCorrectionFactor = 1.0;
+        this.applyEffectivePlaybackRate();
+      }
+      this.publishStats();
+      return;
+    }
 
     // Only apply drift correction when room is actively playing
     if (!this.currentRoomState.isPlaying) {
@@ -232,13 +294,7 @@ export class PlaybackSynchronizer {
     }
     // Band 3: Major drift (> 1500ms) -> hard seek
     else {
-      this.executeProgrammaticChange(PlaybackChangeSource.SYNC, () => {
-        if (this.video) {
-          this.video.currentTime = targetPosition;
-          this.driftCorrectionFactor = 1.0;
-          this.applyEffectivePlaybackRate();
-        }
-      });
+      this.executeProgrammaticSeek(targetPosition, PlaybackChangeSource.SYNC);
     }
 
     this.publishStats();
@@ -249,7 +305,12 @@ export class PlaybackSynchronizer {
 
     // User initiated Play
     this.video.addEventListener('play', () => {
-      if (this.changeSource === PlaybackChangeSource.USER && this.video) {
+      if (this.programmaticPlayCount > 0) {
+        this.programmaticPlayCount--;
+        if (this.programmaticPlayCount === 0 && this.programmaticSeekCount === 0 && this.programmaticPauseCount === 0) {
+          this.changeSource = PlaybackChangeSource.USER;
+        }
+      } else if (this.changeSource === PlaybackChangeSource.USER && this.video) {
         this.wsClient.sendPlay(this.video.currentTime);
       }
       this.publishStats();
@@ -257,7 +318,12 @@ export class PlaybackSynchronizer {
 
     // User initiated Pause
     this.video.addEventListener('pause', () => {
-      if (this.changeSource === PlaybackChangeSource.USER && this.video) {
+      if (this.programmaticPauseCount > 0) {
+        this.programmaticPauseCount--;
+        if (this.programmaticPlayCount === 0 && this.programmaticSeekCount === 0 && this.programmaticPauseCount === 0) {
+          this.changeSource = PlaybackChangeSource.USER;
+        }
+      } else if (this.changeSource === PlaybackChangeSource.USER && this.video) {
         this.wsClient.sendPause(this.video.currentTime);
       }
       this.publishStats();
@@ -265,13 +331,22 @@ export class PlaybackSynchronizer {
 
     // Seeking handlers
     this.video.addEventListener('seeking', () => {
-      if (this.changeSource === PlaybackChangeSource.USER) {
+      if (this.programmaticSeekCount > 0) {
+        // Programmatic seek in progress; do not mark as user seeking
+      } else if (this.changeSource === PlaybackChangeSource.USER) {
         this.isUserSeeking = true;
       }
     });
 
     this.video.addEventListener('seeked', () => {
-      if (this.changeSource === PlaybackChangeSource.USER && this.video) {
+      this.lastSeekTime = Date.now();
+      if (this.programmaticSeekCount > 0) {
+        this.programmaticSeekCount--;
+        if (this.programmaticSeekCount === 0) {
+          this.changeSource = PlaybackChangeSource.USER;
+        }
+        // Programmatic seek completed: DO NOT send seek over websocket
+      } else if (this.changeSource === PlaybackChangeSource.USER && this.video) {
         this.isUserSeeking = false;
         this.wsClient.sendSeek(this.video.currentTime);
       }
