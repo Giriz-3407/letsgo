@@ -93,3 +93,62 @@ async def test_late_joiner_and_host_transfer(manager: RoomManager):
     updated_room, new_host = await manager.handle_leave("ROOM_LATE", "host_alice")
     assert new_host == "user_charlie"
     assert updated_room.hostId == "user_charlie"
+
+@pytest.mark.asyncio
+async def test_playback_rate_default_and_calculation(manager: RoomManager):
+    room = await manager.create_room(
+        room_id="ROOM_SPEED",
+        host_id="host_1",
+        host_display_name="Alice",
+        control_mode=ControlMode.HOST_ONLY
+    )
+    assert room.playbackRate == 1.0
+
+    # Start playback at pos 10.0
+    updated_room, play_time = await manager.handle_play("ROOM_SPEED", "host_1", 10.0)
+
+    # Change playback speed to 1.5x
+    rate_room, rate_time = await manager.handle_playback_rate("ROOM_SPEED", "host_1", 1.5)
+    assert rate_room.playbackRate == 1.5
+
+    # 4 simulated seconds later at 1.5x -> position should advance by 6.0s
+    simulated_future_time = rate_time + 4000.0
+    future_pos = manager.calculate_current_position(rate_room, simulated_future_time)
+    assert future_pos == round(rate_room.position + 6.0, 3)
+
+@pytest.mark.asyncio
+async def test_playback_rate_permissions_and_validation(manager: RoomManager):
+    room = await manager.create_room(
+        room_id="ROOM_PERM_RATE",
+        host_id="host_alice",
+        host_display_name="Alice",
+        control_mode=ControlMode.HOST_ONLY
+    )
+
+    # Bob tries to change playback rate in HOST_ONLY room -> 403
+    with pytest.raises(Exception) as exc_info:
+        await manager.handle_playback_rate("ROOM_PERM_RATE", "bob", 1.25)
+    assert "Permission denied" in str(exc_info.value)
+
+    # Host changes rate -> success
+    updated, _ = await manager.handle_playback_rate("ROOM_PERM_RATE", "host_alice", 1.25)
+    assert updated.playbackRate == 1.25
+
+    # Test invalid rate: <= 0 or > 4.0
+    with pytest.raises(Exception) as exc_info:
+        await manager.handle_playback_rate("ROOM_PERM_RATE", "host_alice", 0.0)
+    assert "Invalid playback rate" in str(exc_info.value)
+
+    with pytest.raises(Exception) as exc_info:
+        await manager.handle_playback_rate("ROOM_PERM_RATE", "host_alice", -1.0)
+    assert "Invalid playback rate" in str(exc_info.value)
+
+    with pytest.raises(Exception) as exc_info:
+        await manager.handle_playback_rate("ROOM_PERM_RATE", "host_alice", 5.0)
+    assert "Invalid playback rate" in str(exc_info.value)
+
+    # Switch to EVERYONE mode
+    await manager.handle_change_settings("ROOM_PERM_RATE", "host_alice", control_mode=ControlMode.EVERYONE)
+    bob_room, _ = await manager.handle_playback_rate("ROOM_PERM_RATE", "bob", 2.0)
+    assert bob_room.playbackRate == 2.0
+

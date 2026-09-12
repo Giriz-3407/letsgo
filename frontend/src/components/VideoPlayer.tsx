@@ -13,12 +13,74 @@ import {
   Shield,
   Loader2,
   Film,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
+
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+const RotateLeft10Icon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <text
+      x="12"
+      y="15.5"
+      textAnchor="middle"
+      fontSize="8"
+      fontWeight="700"
+      fill="currentColor"
+      stroke="none"
+      fontFamily="system-ui, -apple-system, sans-serif"
+    >
+      10
+    </text>
+  </svg>
+);
+
+const RotateRight10Icon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+    <text
+      x="12"
+      y="15.5"
+      textAnchor="middle"
+      fontSize="8"
+      fontWeight="700"
+      fill="currentColor"
+      stroke="none"
+      fontFamily="system-ui, -apple-system, sans-serif"
+    >
+      10
+    </text>
+  </svg>
+);
 
 interface Props {
   video: VideoMetadata | null;
   synchronizer: PlaybackSynchronizer | null;
   canControl: boolean;
+  playbackRate?: number;
+  onPlaybackRateChange?: (rate: number) => void;
   onOpenPicker?: () => void;
 }
 
@@ -26,6 +88,8 @@ export const VideoPlayer: React.FC<Props> = ({
   video,
   synchronizer,
   canControl,
+  playbackRate = 1.0,
+  onPlaybackRateChange,
   onOpenPicker,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -40,7 +104,10 @@ export const VideoPlayer: React.FC<Props> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const controlsTimeoutRef = useRef<number | null>(null);
+  const speedMenuRef = useRef<HTMLDivElement | null>(null);
+  const pendingSeekTimeRef = useRef<number | null>(null);
 
   // Attach video element to PlaybackSynchronizer
   useEffect(() => {
@@ -70,6 +137,9 @@ export const VideoPlayer: React.FC<Props> = ({
     const onWaiting = () => setIsBuffering(true);
     const onPlaying = () => setIsBuffering(false);
     const onCanPlay = () => setIsBuffering(false);
+    const onSeeked = () => {
+      pendingSeekTimeRef.current = null;
+    };
 
     el.addEventListener('play', onPlay);
     el.addEventListener('pause', onPause);
@@ -78,6 +148,7 @@ export const VideoPlayer: React.FC<Props> = ({
     el.addEventListener('waiting', onWaiting);
     el.addEventListener('playing', onPlaying);
     el.addEventListener('canplay', onCanPlay);
+    el.addEventListener('seeked', onSeeked);
 
     return () => {
       el.removeEventListener('play', onPlay);
@@ -87,8 +158,33 @@ export const VideoPlayer: React.FC<Props> = ({
       el.removeEventListener('waiting', onWaiting);
       el.removeEventListener('playing', onPlaying);
       el.removeEventListener('canplay', onCanPlay);
+      el.removeEventListener('seeked', onSeeked);
     };
   }, []);
+
+  // Close speed menu on outside click or Escape key
+  useEffect(() => {
+    if (!isSpeedMenuOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (speedMenuRef.current && !speedMenuRef.current.contains(e.target as Node)) {
+        setIsSpeedMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsSpeedMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSpeedMenuOpen]);
 
   // Controls auto-hide timer
   const handleMouseMove = () => {
@@ -113,13 +209,76 @@ export const VideoPlayer: React.FC<Props> = ({
     }
   };
 
+  const handleSkip = (deltaSeconds: number) => {
+    if (!canControl || !videoRef.current || !synchronizer) return;
+    const dur = videoRef.current.duration;
+    const maxTime = !dur || isNaN(dur) || !isFinite(dur) ? 0 : dur;
+    const baseTime =
+      pendingSeekTimeRef.current !== null
+        ? pendingSeekTimeRef.current
+        : videoRef.current.currentTime || 0;
+    const target =
+      maxTime > 0
+        ? Math.max(0, Math.min(maxTime, baseTime + deltaSeconds))
+        : Math.max(0, baseTime + deltaSeconds);
+
+    pendingSeekTimeRef.current = target;
+    synchronizer.setChangeSource(PlaybackChangeSource.USER);
+    videoRef.current.currentTime = target;
+    setCurrentTime(target);
+  };
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!canControl || !videoRef.current || !synchronizer) return;
+    pendingSeekTimeRef.current = null;
     const target = parseFloat(e.target.value);
     synchronizer.setChangeSource(PlaybackChangeSource.USER);
     videoRef.current.currentTime = target;
     setCurrentTime(target);
   };
+
+  const currentSpeed = playbackRate ?? (synchronizer?.getUserPlaybackRate() || 1.0);
+
+  const handleSelectSpeed = (speed: number) => {
+    if (!canControl) return;
+    setIsSpeedMenuOpen(false);
+    if (onPlaybackRateChange) {
+      onPlaybackRateChange(speed);
+    } else if (synchronizer) {
+      synchronizer.requestPlaybackRate(speed);
+    }
+  };
+
+  // Global keyboard shortcuts (Left/Right arrow seek 10s)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (!canControl || !video) return;
+
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          activeEl.tagName === 'SELECT' ||
+          (activeEl as HTMLElement).isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleSkip(-10);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleSkip(10);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [canControl, video, duration]);
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
@@ -270,12 +429,13 @@ export const VideoPlayer: React.FC<Props> = ({
 
         {/* Controls Row */}
         <div className="flex items-center justify-between text-neutral-200">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Play / Pause */}
             <button
               onClick={togglePlayPause}
               disabled={!canControl}
               title={canControl ? (isPlaying ? 'Pause' : 'Play') : 'Host only control'}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
               className="p-1.5 text-neutral-200 hover:text-white disabled:opacity-30 rounded transition-colors"
             >
               {isPlaying ? (
@@ -283,6 +443,28 @@ export const VideoPlayer: React.FC<Props> = ({
               ) : (
                 <Play className="w-4 h-4 fill-current ml-0.5" />
               )}
+            </button>
+
+            {/* Skip Backward 10s */}
+            <button
+              onClick={() => handleSkip(-10)}
+              disabled={!canControl}
+              title={canControl ? 'Seek backward 10 seconds (-10s)' : 'Host only control'}
+              aria-label="Seek backward 10 seconds"
+              className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 rounded transition-colors"
+            >
+              <RotateLeft10Icon className="w-4 h-4" />
+            </button>
+
+            {/* Skip Forward 10s */}
+            <button
+              onClick={() => handleSkip(10)}
+              disabled={!canControl}
+              title={canControl ? 'Seek forward 10 seconds (+10s)' : 'Host only control'}
+              aria-label="Seek forward 10 seconds"
+              className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 rounded transition-colors"
+            >
+              <RotateRight10Icon className="w-4 h-4" />
             </button>
 
             {/* Timestamps */}
@@ -328,6 +510,57 @@ export const VideoPlayer: React.FC<Props> = ({
                 <Download className="w-4 h-4" />
               </a>
             )}
+
+            {/* Playback Speed Popover */}
+            <div className="relative" ref={speedMenuRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (canControl) {
+                    setIsSpeedMenuOpen((prev) => !prev);
+                  }
+                }}
+                disabled={!canControl}
+                aria-label="Playback speed"
+                aria-haspopup="true"
+                aria-expanded={isSpeedMenuOpen}
+                title={canControl ? `Playback speed (${currentSpeed}x)` : 'Host only control'}
+                className="px-2 py-1 text-xs font-mono text-neutral-300 hover:text-white disabled:opacity-30 rounded hover:bg-white/[0.08] transition-colors flex items-center gap-1"
+              >
+                <span>{currentSpeed}x</span>
+                <ChevronDown className="w-3 h-3 text-neutral-400" />
+              </button>
+
+              {isSpeedMenuOpen && (
+                <div
+                  role="menu"
+                  aria-label="Playback speed options"
+                  className="absolute bottom-full right-0 mb-2 py-1 w-24 bg-[#111114] border border-white/[0.1] rounded-lg shadow-2xl backdrop-blur-md z-30 flex flex-col"
+                >
+                  <div className="px-2.5 py-1 text-[10px] font-medium tracking-wider text-neutral-500 uppercase border-b border-white/[0.06] mb-1 select-none">
+                    Speed
+                  </div>
+                  {SPEED_OPTIONS.map((speed) => {
+                    const isSelected = currentSpeed === speed;
+                    return (
+                      <button
+                        key={speed}
+                        role="menuitem"
+                        onClick={() => handleSelectSpeed(speed)}
+                        className={`px-2.5 py-1.5 text-xs text-left font-mono flex items-center justify-between transition-colors ${
+                          isSelected
+                            ? 'bg-white text-black font-semibold'
+                            : 'text-neutral-300 hover:bg-white/[0.08] hover:text-white'
+                        }`}
+                      >
+                        <span>{speed}x</span>
+                        {isSelected && <Check className="w-3 h-3 text-black stroke-[2.5]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* Fullscreen */}
             <button

@@ -21,6 +21,13 @@ export interface SessionStatus {
   googleOAuthConfigured: boolean;
 }
 
+export interface GooglePickerConfig {
+  accessToken: string;
+  apiKey: string;
+  appId: string;
+  clientId: string;
+}
+
 class ApiClient {
   private getHeaders(): HeadersInit {
     const headers: HeadersInit = {
@@ -161,6 +168,17 @@ class ApiClient {
     }
     const data = await res.json();
     return data.url;
+  }
+
+  public async getGooglePickerConfig(): Promise<GooglePickerConfig> {
+    const res = await fetch(this.buildUrl('/api/auth/google/picker-config'), {
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to fetch Google Picker configuration');
+    }
+    return res.json();
   }
 
   public async listDriveVideos(): Promise<VideoMetadata[]> {

@@ -18,10 +18,12 @@ class Settings(BaseSettings):
     STORAGE_PROVIDER: str = "local"  # "local", "google_drive", "s3"
     MEDIA_DIR: Path = BASE_DIR / "sample_media"
     
-    # Google OAuth
+    # Google OAuth & Picker
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_APP_ID: str = ""
     
     # Security
     SESSION_SECRET: str = "watchtogether-secret-key-change-in-production-12345"

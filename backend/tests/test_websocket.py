@@ -24,6 +24,7 @@ async def test_websocket_full_sync_flow():
         assert state["roomId"] == "WSROOM"
         assert state["isPlaying"] is False
         assert state["position"] == 0.0
+        assert state["playbackRate"] == 1.0
 
         # Test NTP Time Sync
         ws_host.send_json({"type": "TIME_SYNC", "t1": 1000.0})
@@ -68,3 +69,24 @@ async def test_websocket_full_sync_flow():
             assert pause_for_host["position"] == 18.0
             assert pause_for_bob["type"] == "PAUSE"
             assert pause_for_bob["position"] == 18.0
+
+            # 7. Bob attempts to change playback rate (unauthorized in HOST_ONLY mode)
+            ws_bob.send_json({"type": "PLAYBACK_RATE", "rate": 1.5})
+            bob_rate_err = ws_bob.receive_json()
+            assert bob_rate_err["type"] == "ERROR"
+            assert bob_rate_err["code"] == "PLAYBACK_RATE_ERROR"
+
+            # 8. Host changes playback rate to 1.5
+            ws_host.send_json({"type": "PLAYBACK_RATE", "rate": 1.5})
+            rate_for_host = ws_host.receive_json()
+            rate_for_bob = ws_bob.receive_json()
+            assert rate_for_host["type"] == "PLAYBACK_RATE"
+            assert rate_for_host["rate"] == 1.5
+            assert rate_for_bob["type"] == "PLAYBACK_RATE"
+            assert rate_for_bob["rate"] == 1.5
+
+            # 9. New participant Charlie joins and receives updated playbackRate in ROOM_STATE
+            with client.websocket_connect("/ws/rooms/WSROOM?participant_id=ws_charlie&display_name=Charlie") as ws_charlie:
+                charlie_state = ws_charlie.receive_json()
+                assert charlie_state["type"] == "ROOM_STATE"
+                assert charlie_state["playbackRate"] == 1.5

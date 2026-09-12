@@ -138,6 +138,23 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
     );
 
     unsubs.push(
+      wsClient.on('PLAYBACK_RATE', (msg) => {
+        setRoomState((prev) => {
+          if (!prev) return prev;
+          const updated = {
+            ...prev,
+            playbackRate: msg.rate,
+            position: msg.position !== undefined ? msg.position : prev.position,
+            lastStateChangeServerTime: msg.serverTime !== undefined ? msg.serverTime : prev.lastStateChangeServerTime,
+          };
+          synchronizer.setUserPlaybackRate(msg.rate);
+          synchronizer.synchronizeToState(updated);
+          return updated;
+        });
+      })
+    );
+
+    unsubs.push(
       wsClient.on('PARTICIPANT_JOINED', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
@@ -333,6 +350,10 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
             video={roomState?.video || null}
             synchronizer={synchronizer}
             canControl={canControl}
+            playbackRate={roomState?.playbackRate ?? 1.0}
+            onPlaybackRateChange={(rate) => {
+              synchronizer.requestPlaybackRate(rate);
+            }}
             onOpenPicker={() => setIsPickerOpen(true)}
           />
         </div>

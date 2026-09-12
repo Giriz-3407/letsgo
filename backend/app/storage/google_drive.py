@@ -16,45 +16,11 @@ class GoogleDriveStorageProvider(StorageProvider):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def list_videos(self, user_token: Optional[str] = None) -> List[VideoMetadata]:
-        if not user_token:
-            return []
-
-        headers = {"Authorization": f"Bearer {user_token}"}
-        query = "trashed = false and (mimeType contains 'video/' or name contains '.mp4' or name contains '.webm')"
-        params = {
-            "q": query,
-            "fields": "files(id, name, mimeType, size, videoMediaMetadata)",
-            "pageSize": 50,
-            "orderBy": "modifiedTime desc"
-        }
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{GOOGLE_DRIVE_API_BASE}/files", headers=headers, params=params)
-            if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail=f"Google Drive API error: {resp.text}")
-
-            data = resp.json()
-            files = data.get("files", [])
-
-            results: List[VideoMetadata] = []
-            for f in files:
-                duration_sec = None
-                if "videoMediaMetadata" in f and "durationMillis" in f["videoMediaMetadata"]:
-                    duration_sec = float(f["videoMediaMetadata"]["durationMillis"]) / 1000.0
-
-                results.append(
-                    VideoMetadata(
-                        id=f["id"],
-                        name=f["name"],
-                        mimeType=f.get("mimeType", "video/mp4"),
-                        size=int(f["size"]) if "size" in f else None,
-                        duration=duration_sec,
-                        streamUrl=f"/api/drive/videos/{f['id']}/stream",
-                        downloadUrl=f"/api/drive/videos/{f['id']}/download",
-                        provider="google_drive"
-                    )
-                )
-            return results
+        """
+        File selection is now delegated directly to the official Google Picker API
+        in the browser. This method no longer queries an arbitrary 50-file batch.
+        """
+        return []
 
     async def get_video_metadata(self, video_id: str, user_token: Optional[str] = None) -> Optional[VideoMetadata]:
         if not user_token:

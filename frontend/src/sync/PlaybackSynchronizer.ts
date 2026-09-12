@@ -29,6 +29,10 @@ export class PlaybackSynchronizer {
   private isBuffering: boolean = false;
   private isUserSeeking: boolean = false;
 
+  // Decoupled playback rate & drift correction
+  private userPlaybackRate: number = 1.0;
+  private driftCorrectionFactor: number = 1.0;
+
   constructor(wsClient: WebSocketRoomClient, clockSync: ClockSynchronizer) {
     this.wsClient = wsClient;
     this.clockSync = clockSync;
@@ -36,6 +40,7 @@ export class PlaybackSynchronizer {
 
   public attachVideo(videoElement: HTMLVideoElement): () => void {
     this.video = videoElement;
+    this.applyEffectivePlaybackRate();
     this.setupVideoListeners();
     this.startPeriodicDriftCheck();
 
@@ -49,8 +54,38 @@ export class PlaybackSynchronizer {
     this.video = null;
   }
 
+  public getUserPlaybackRate(): number {
+    return this.userPlaybackRate;
+  }
+
+  public setUserPlaybackRate(rate: number): void {
+    this.userPlaybackRate = rate;
+    this.applyEffectivePlaybackRate();
+    this.publishStats();
+  }
+
+  public requestPlaybackRate(rate: number): void {
+    this.userPlaybackRate = rate;
+    this.applyEffectivePlaybackRate();
+    this.wsClient.sendPlaybackRate(rate);
+    this.publishStats();
+  }
+
+  private applyEffectivePlaybackRate(): void {
+    if (!this.video) return;
+    const effectiveRate = this.userPlaybackRate * this.driftCorrectionFactor;
+    if (Math.abs(this.video.playbackRate - effectiveRate) > 0.001) {
+      this.video.playbackRate = effectiveRate;
+    }
+  }
+
   public updateRoomState(state: RoomState): void {
     this.currentRoomState = state;
+    if (state.playbackRate !== undefined && state.playbackRate !== null) {
+      this.userPlaybackRate = state.playbackRate;
+    }
+    this.driftCorrectionFactor = 1.0;
+    this.applyEffectivePlaybackRate();
     this.synchronizeToState(state, true);
   }
 
@@ -77,7 +112,8 @@ export class PlaybackSynchronizer {
 
     const currentServerTime = this.clockSync.getEstimatedServerTime();
     const elapsedSec = (currentServerTime - this.currentRoomState.lastStateChangeServerTime) / 1000.0;
-    let pos = this.currentRoomState.position + elapsedSec;
+    const rate = this.currentRoomState.playbackRate ?? this.userPlaybackRate ?? 1.0;
+    let pos = this.currentRoomState.position + elapsedSec * rate;
 
     if (this.currentRoomState.video?.duration && pos > this.currentRoomState.video.duration) {
       pos = this.currentRoomState.video.duration;
@@ -92,6 +128,9 @@ export class PlaybackSynchronizer {
     if (!this.video) return;
 
     this.currentRoomState = state;
+    if (state.playbackRate !== undefined && state.playbackRate !== null) {
+      this.userPlaybackRate = state.playbackRate;
+    }
     const targetPosition = this.calculateAuthoritativePosition();
     const drift = Math.abs(targetPosition - this.video.currentTime);
 
@@ -100,7 +139,8 @@ export class PlaybackSynchronizer {
       this.executeProgrammaticChange(PlaybackChangeSource.REMOTE, () => {
         if (this.video) {
           this.video.currentTime = targetPosition;
-          this.video.playbackRate = 1.0;
+          this.driftCorrectionFactor = 1.0;
+          this.applyEffectivePlaybackRate();
         }
       });
     }
@@ -159,8 +199,9 @@ export class PlaybackSynchronizer {
 
     // Only apply drift correction when room is actively playing
     if (!this.currentRoomState.isPlaying) {
-      if (this.video.playbackRate !== 1.0) {
-        this.video.playbackRate = 1.0;
+      if (this.driftCorrectionFactor !== 1.0) {
+        this.driftCorrectionFactor = 1.0;
+        this.applyEffectivePlaybackRate();
       }
       this.publishStats();
       return;
@@ -171,28 +212,31 @@ export class PlaybackSynchronizer {
     const drift = targetPosition - localPosition; // Positive means local is behind, negative means ahead
     const absDrift = Math.abs(drift);
 
-    // Band 1: Imperceptible drift (< 150ms) -> do nothing, restore normal playbackRate
+    // Band 1: Imperceptible drift (< 150ms) -> do nothing, restore normal playbackRate (factor = 1.0)
     if (absDrift < 0.15) {
-      if (this.video.playbackRate !== 1.0) {
-        this.video.playbackRate = 1.0;
+      if (this.driftCorrectionFactor !== 1.0) {
+        this.driftCorrectionFactor = 1.0;
+        this.applyEffectivePlaybackRate();
       }
     }
     // Band 2: Minor drift (150ms - 1500ms) -> subtle micro-stepping to avoid audio/video stutter
     else if (absDrift <= 1.5) {
       if (drift > 0) {
-        // Local is lagging -> speed up slightly (1.05x)
-        this.video.playbackRate = 1.05;
+        // Local is lagging -> speed up slightly (1.05x factor)
+        this.driftCorrectionFactor = 1.05;
       } else {
-        // Local is leading -> slow down slightly (0.95x)
-        this.video.playbackRate = 0.95;
+        // Local is leading -> slow down slightly (0.95x factor)
+        this.driftCorrectionFactor = 0.95;
       }
+      this.applyEffectivePlaybackRate();
     }
     // Band 3: Major drift (> 1500ms) -> hard seek
     else {
       this.executeProgrammaticChange(PlaybackChangeSource.SYNC, () => {
         if (this.video) {
           this.video.currentTime = targetPosition;
-          this.video.playbackRate = 1.0;
+          this.driftCorrectionFactor = 1.0;
+          this.applyEffectivePlaybackRate();
         }
       });
     }

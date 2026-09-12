@@ -122,6 +122,10 @@ export class WebSocketRoomClient {
     this.send({ type: 'SEEK', position });
   }
 
+  public sendPlaybackRate(rate: number): void {
+    this.send({ type: 'PLAYBACK_RATE', rate });
+  }
+
   public sendBuffering(isBuffering: boolean, position?: number): void {
     this.send({ type: 'BUFFERING', isBuffering, position });
   }

@@ -19,7 +19,8 @@ class RoomManager:
             return round(room.position, 3)
 
         elapsed_seconds = (now_ms - room.lastStateChangeServerTime) / 1000.0
-        current_pos = room.position + elapsed_seconds
+        rate = getattr(room, "playbackRate", 1.0) or 1.0
+        current_pos = room.position + (elapsed_seconds * rate)
 
         if room.video and room.video.duration:
             if current_pos >= room.video.duration:
@@ -55,6 +56,7 @@ class RoomManager:
             video=video,
             isPlaying=False,
             position=0.0,
+            playbackRate=1.0,
             lastStateChangeServerTime=now_ms,
             controlMode=control_mode,
             pauseOnBuffer=pause_on_buffer,
@@ -201,6 +203,28 @@ class RoomManager:
         room.position = max(0.0, position)
         room.lastStateChangeServerTime = now_ms
 
+        await self.repo.save_room(room)
+        return room, now_ms
+
+    async def handle_playback_rate(
+        self, room_id: str, participant_id: str, rate: float
+    ) -> Tuple[RoomState, float]:
+        room = await self.repo.get_room(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+
+        if not self.can_control(room, participant_id):
+            raise HTTPException(status_code=403, detail="Permission denied: only host can control playback")
+
+        if rate <= 0.0 or rate > 4.0:
+            raise HTTPException(status_code=400, detail="Invalid playback rate: must be between 0.25 and 4.0")
+
+        now_ms = self.current_server_time_ms()
+        if room.isPlaying:
+            room.position = self.calculate_current_position(room, now_ms)
+            room.lastStateChangeServerTime = now_ms
+
+        room.playbackRate = round(rate, 3)
         await self.repo.save_room(room)
         return room, now_ms
 

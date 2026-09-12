@@ -78,6 +78,26 @@ async def google_oauth_callback(
     set_session_cookie(resp, session_id)
     return resp
 
+@router.get("/google/picker-config")
+async def get_google_picker_config(request: Request):
+    session_id = request.cookies.get("session_id") or request.headers.get("X-Session-ID")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    access_token = await session_store.get_valid_google_access_token(session_id)
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Google Drive is not connected. Please connect your Google account first."
+        )
+
+    return {
+        "accessToken": access_token,
+        "apiKey": settings.GOOGLE_API_KEY,
+        "appId": settings.GOOGLE_APP_ID,
+        "clientId": settings.GOOGLE_CLIENT_ID,
+    }
+
 @router.post("/google/disconnect")
 async def disconnect_google(request: Request):
     session_id = request.cookies.get("session_id") or request.headers.get("X-Session-ID")
@@ -89,15 +109,8 @@ drive_router = APIRouter(prefix="/api/drive", tags=["drive"])
 
 @drive_router.get("/videos", response_model=List[VideoMetadata])
 async def list_drive_videos(request: Request):
-    session_id = request.cookies.get("session_id") or request.headers.get("X-Session-ID")
-    if not session_id:
-        raise HTTPException(status_code=401, detail="Session required")
-
-    access_token = session_store.get_google_access_token(session_id)
-    if not access_token:
-        raise HTTPException(
-            status_code=401,
-            detail="Google Drive is not connected. Please connect your Google account first."
-        )
-
-    return await drive_storage.list_videos(user_token=access_token)
+    """
+    Deprecated: Drive file browsing is now handled natively by the Google Picker API.
+    Returns an empty list to avoid arbitrary 50-file listings.
+    """
+    return []

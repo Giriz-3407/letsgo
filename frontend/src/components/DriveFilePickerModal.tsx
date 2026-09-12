@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { VideoMetadata } from '../types';
 import { api, SessionStatus } from '../api/client';
-import { X, Film, Upload, Cloud, RefreshCw, Check, AlertCircle } from 'lucide-react';
+import { openGoogleDrivePicker } from '../utils/googlePicker';
+import { X, Film, Upload, Cloud, RefreshCw, Check, AlertCircle, FolderOpen, Loader2 } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -18,10 +19,10 @@ export const DriveFilePickerModal: React.FC<Props> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'local' | 'drive' | 'upload'>('local');
   const [localVideos, setLocalVideos] = useState<VideoMetadata[]>([]);
-  const [driveVideos, setDriveVideos] = useState<VideoMetadata[]>([]);
   const [session, setSession] = useState<SessionStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [importingId, setImportingId] = useState<string | null>(null);
+  const [isOpeningPicker, setIsOpeningPicker] = useState(false);
+  const [importingVideoName, setImportingVideoName] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,24 +39,8 @@ export const DriveFilePickerModal: React.FC<Props> = ({
       const [vids, sess] = await Promise.all([api.listVideos(), api.getSessionStatus()]);
       setLocalVideos(vids);
       setSession(sess);
-
-      if (sess.driveConnected) {
-        loadDriveVideos();
-      }
     } catch (err: any) {
       setError(err.message || 'Failed to load media');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadDriveVideos = async () => {
-    try {
-      setLoading(true);
-      const dVids = await api.listDriveVideos();
-      setDriveVideos(dVids);
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch Google Drive videos');
     } finally {
       setLoading(false);
     }
@@ -74,23 +59,47 @@ export const DriveFilePickerModal: React.FC<Props> = ({
     try {
       await api.disconnectGoogle();
       setSession((prev) => (prev ? { ...prev, driveConnected: false } : null));
-      setDriveVideos([]);
     } catch (err: any) {
       setError('Failed to disconnect Google account');
     }
   };
 
-  const handleSelectDriveVideo = async (file: VideoMetadata) => {
+  const handleOpenGooglePicker = async () => {
+    setError(null);
+    setIsOpeningPicker(true);
     try {
-      setImportingId(file.id);
-      setError(null);
-      const imported = await api.importDriveVideo(file.id);
+      // 1. Fetch valid access token & configuration from backend session
+      const pickerConfig = await api.getGooglePickerConfig();
+
+      const apiKey = pickerConfig.apiKey || (import.meta as any).env?.VITE_GOOGLE_API_KEY;
+      const appId = pickerConfig.appId || (import.meta as any).env?.VITE_GOOGLE_APP_ID;
+
+      // 2. Launch Google Picker dialog
+      const selectedFile = await openGoogleDrivePicker({
+        accessToken: pickerConfig.accessToken,
+        apiKey: apiKey || undefined,
+        appId: appId || undefined,
+        title: 'Select a video to WatchTogether',
+      });
+
+      // 3. User closed or cancelled picker
+      if (!selectedFile) {
+        setIsOpeningPicker(false);
+        return;
+      }
+
+      // 4. Pass selected file ID into existing backend storage flow
+      setIsOpeningPicker(false);
+      setImportingVideoName(selectedFile.name);
+
+      const imported = await api.importDriveVideo(selectedFile.id);
       onSelectVideo(imported);
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to import video from Google Drive');
+      setError(err.message || 'Failed to select or import video from Google Drive');
     } finally {
-      setImportingId(null);
+      setIsOpeningPicker(false);
+      setImportingVideoName(null);
     }
   };
 
@@ -145,13 +154,16 @@ export const DriveFilePickerModal: React.FC<Props> = ({
 
           <button
             onClick={() => setActiveTab('drive')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${
               activeTab === 'drive'
                 ? 'bg-white text-black'
                 : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            Google Drive {session?.driveConnected && `(${driveVideos.length})`}
+            <span>Google Drive</span>
+            {session?.driveConnected && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            )}
           </button>
 
           <button
@@ -227,7 +239,7 @@ export const DriveFilePickerModal: React.FC<Props> = ({
             </div>
           )}
 
-          {/* TAB 2: GOOGLE DRIVE */}
+          {/* TAB 2: GOOGLE DRIVE (OFFICIAL GOOGLE PICKER) */}
           {activeTab === 'drive' && (
             <div>
               {!session?.driveConnected ? (
@@ -238,7 +250,7 @@ export const DriveFilePickerModal: React.FC<Props> = ({
                   <div className="max-w-xs mx-auto">
                     <h4 className="text-xs font-medium text-neutral-200">Connect Google Drive</h4>
                     <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
-                      Choose video files from your Drive account. Tokens are kept securely on the server.
+                      Connect your Google Drive account to select movies and video files directly using Google's official Drive Picker.
                     </p>
                   </div>
                   <button
@@ -248,73 +260,66 @@ export const DriveFilePickerModal: React.FC<Props> = ({
                     <span>Authorize with Google</span>
                   </button>
                 </div>
+              ) : importingVideoName ? (
+                <div className="text-center py-16 px-4 space-y-3">
+                  <Loader2 className="w-6 h-6 animate-spin text-white mx-auto" />
+                  <div>
+                    <h4 className="text-xs font-medium text-neutral-200">Importing video from Google Drive</h4>
+                    <p className="text-[11px] text-neutral-400 mt-1 max-w-sm mx-auto truncate">
+                      {importingVideoName}
+                    </p>
+                    <span className="text-[10px] text-neutral-500 block mt-2">
+                      Preparing low-latency range-request video stream...
+                    </span>
+                  </div>
+                </div>
               ) : (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+                <div className="space-y-4 py-2">
+                  <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
                     <span className="text-[11px] text-neutral-400 flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                       Google Drive connected
                     </span>
-                    <div className="flex items-center gap-3 text-xs">
-                      <button
-                        onClick={loadDriveVideos}
-                        className="text-neutral-400 hover:text-neutral-200 transition-colors"
-                        title="Refresh list"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={handleDisconnectDrive}
-                        className="text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
+                    <button
+                      onClick={handleDisconnectDrive}
+                      className="text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors"
+                    >
+                      Disconnect
+                    </button>
                   </div>
 
-                  {loading ? (
-                    <div className="py-16 flex flex-col justify-center items-center text-neutral-500 gap-2">
-                      <RefreshCw className="w-4 h-4 animate-spin text-neutral-400" />
-                      <span className="text-xs">Fetching Drive files...</span>
+                  <div className="p-6 rounded-xl border border-white/[0.08] bg-white/[0.02] text-center space-y-4">
+                    <div className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08] mx-auto flex items-center justify-center text-neutral-300">
+                      <FolderOpen className="w-5 h-5" />
                     </div>
-                  ) : driveVideos.length === 0 ? (
-                    <div className="text-center py-12 text-neutral-500 text-xs">
-                      No video files found in Google Drive.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-white/[0.06] max-h-72 overflow-y-auto">
-                      {driveVideos.map((f) => (
-                        <div
-                          key={f.id}
-                          className="py-3 flex items-center justify-between group"
-                        >
-                          <div className="min-w-0 pr-4">
-                            <h5 className="text-xs font-medium text-neutral-200 truncate group-hover:text-white transition-colors">
-                              {f.name}
-                            </h5>
-                            <span className="text-[11px] text-neutral-500 block mt-0.5">
-                              {f.size ? `${(f.size / (1024 * 1024)).toFixed(1)} MB` : 'Cloud Video'}
-                            </span>
-                          </div>
 
-                          <button
-                            disabled={importingId === f.id}
-                            onClick={() => handleSelectDriveVideo(f)}
-                            className="h-8 px-3.5 bg-white/[0.05] hover:bg-white text-neutral-300 hover:text-black disabled:opacity-40 rounded-lg text-xs font-medium transition-colors border border-white/[0.08] flex items-center gap-1.5 flex-shrink-0"
-                          >
-                            {importingId === f.id ? (
-                              <>
-                                <RefreshCw className="w-3 h-3 animate-spin" />
-                                <span>Importing...</span>
-                              </>
-                            ) : (
-                              <span>Select</span>
-                            )}
-                          </button>
-                        </div>
-                      ))}
+                    <div className="max-w-sm mx-auto">
+                      <h4 className="text-xs font-semibold text-neutral-100">
+                        Official Google Drive Picker
+                      </h4>
+                      <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">
+                        Browse folders, navigate your Drive hierarchy, search files, and select any video to watch in synchronized playback.
+                      </p>
                     </div>
-                  )}
+
+                    <button
+                      disabled={isOpeningPicker}
+                      onClick={handleOpenGooglePicker}
+                      className="h-10 px-5 bg-white hover:bg-neutral-200 disabled:opacity-50 text-black rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-2 shadow-sm"
+                    >
+                      {isOpeningPicker ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
+                          <span>Opening Google Picker...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Cloud className="w-3.5 h-3.5" />
+                          <span>Choose from Google Drive</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

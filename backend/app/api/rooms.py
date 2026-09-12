@@ -81,6 +81,7 @@ async def get_room(room_id: str):
         "video": room.video,
         "isPlaying": room.isPlaying,
         "position": pos,
+        "playbackRate": getattr(room, "playbackRate", 1.0),
         "lastStateChangeServerTime": room.lastStateChangeServerTime,
         "controlMode": room.controlMode,
         "pauseOnBuffer": room.pauseOnBuffer,

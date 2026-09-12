@@ -122,6 +122,8 @@ WebSocket messages are only dispatched when the action originates from explicit 
    GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
    GOOGLE_CLIENT_SECRET=your-google-client-secret
    GOOGLE_REDIRECT_URI=https://<RENDER_BACKEND_DOMAIN>/api/auth/google/callback
+   GOOGLE_API_KEY=your-google-api-developer-key
+   GOOGLE_APP_ID=your-google-project-number
    SESSION_SECRET=your-secure-random-secret-key
    STORAGE_PROVIDER=local
    ```
@@ -142,26 +144,57 @@ WebSocket messages are only dispatched when the action originates from explicit 
    ```env
    VITE_API_URL=https://<RENDER_BACKEND_DOMAIN>
    ```
+   *(Optional)*: If you want to specify frontend-level overrides for the Picker:
+   ```env
+   VITE_GOOGLE_API_KEY=your-google-api-developer-key
+   VITE_GOOGLE_APP_ID=your-google-project-number
+   ```
 5. Deploy. `vercel.json` will automatically ensure all client-side SPA routes (`/room/:id`, `/create`) route properly to `index.html`.
 
 ---
 
-### 3. Google Cloud OAuth Production Checklist
+### 3. Google Cloud Console & Picker API Setup Checklist
 
-Configure your OAuth 2.0 Web Client credentials in the [Google Cloud Console](https://console.cloud.google.com/):
+To enable both the Google OAuth flow and the official **Google Picker API** (file/folder browsing):
 
 ```text
-[ ] OAuth consent screen configured (App name, User support email)
-[ ] Test users added (if OAuth app status is 'Testing')
-[ ] Google Drive API enabled under APIs & Services > Enabled APIs
-[ ] Scope added: https://www.googleapis.com/auth/drive.readonly
-[ ] OAuth Web Application client created
-[ ] Authorized JavaScript Origins:
-    - http://localhost:5173
-    - https://<VERCEL_FRONTEND_DOMAIN>
-[ ] Authorized Redirect URIs:
-    - http://localhost:8000/api/auth/google/callback
-    - https://<RENDER_BACKEND_DOMAIN>/api/auth/google/callback
+[ ] 1. Enable APIs in Google Cloud Console (APIs & Services > Library):
+     - Google Drive API
+     - Google Picker API
+
+[ ] 2. Configure OAuth Consent Screen (APIs & Services > OAuth consent screen):
+     - User support email and app name
+     - Scopes:
+       * https://www.googleapis.com/auth/drive.readonly
+       * https://www.googleapis.com/auth/userinfo.profile
+     - Test users added (if in Testing mode)
+
+[ ] 3. Create OAuth 2.0 Web Client ID (APIs & Services > Credentials):
+     - Authorized JavaScript Origins:
+       * http://localhost:5173
+       * https://<VERCEL_FRONTEND_DOMAIN>
+     - Authorized Redirect URIs:
+       * http://localhost:8000/api/auth/google/callback
+       * https://<RENDER_BACKEND_DOMAIN>/api/auth/google/callback
+     - Copy Client ID -> GOOGLE_CLIENT_ID
+     - Copy Client Secret -> GOOGLE_CLIENT_SECRET (strictly backend only)
+
+[ ] 4. Create an API Key (Developer Key) for Google Picker:
+     - APIs & Services > Credentials > Create Credentials > API Key
+     - Click 'Edit API Key':
+       * Set Application restrictions: 'HTTP referrers (web sites)'
+         Add: http://localhost:5173/*
+         Add: https://<VERCEL_FRONTEND_DOMAIN>/*
+       * Set API restrictions: Restrict key to 'Google Picker API' (and optionally 'Google Drive API')
+     - Copy API Key -> GOOGLE_API_KEY
+
+[ ] 5. Obtain Google Cloud Project Number (App ID):
+     - Located in Google Cloud Console > Dashboard > Project Info > Project number
+     - Copy Project Number -> GOOGLE_APP_ID
+
+[ ] 6. Secret Isolation:
+     - GOOGLE_CLIENT_SECRET is NEVER returned to the frontend.
+     - The backend provides temporary session access tokens and public Developer Keys via /api/auth/google/picker-config.
 ```
 
 ---

@@ -30,6 +30,7 @@ export interface RoomState {
   controlMode: ControlMode;
   pauseOnBuffer: boolean;
   participants: Participant[];
+  playbackRate?: number;
   serverTime: number;
 }
 

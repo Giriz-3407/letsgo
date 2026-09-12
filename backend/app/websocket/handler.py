@@ -11,6 +11,7 @@ from ..models.messages import (
     PlayBroadcast,
     PauseBroadcast,
     SeekBroadcast,
+    PlaybackRateBroadcast,
     TimeSyncReply,
     ParticipantJoinedBroadcast,
     ParticipantLeftBroadcast,
@@ -110,6 +111,7 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
         video=updated_room.video,
         isPlaying=updated_room.isPlaying,
         position=current_pos,
+        playbackRate=getattr(updated_room, "playbackRate", 1.0),
         lastStateChangeServerTime=updated_room.lastStateChangeServerTime,
         controlMode=updated_room.controlMode,
         pauseOnBuffer=updated_room.pauseOnBuffer,
@@ -158,6 +160,7 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
                         video=r.video,
                         isPlaying=r.isPlaying,
                         position=pos,
+                        playbackRate=getattr(r, "playbackRate", 1.0),
                         lastStateChangeServerTime=r.lastStateChangeServerTime,
                         controlMode=r.controlMode,
                         pauseOnBuffer=r.pauseOnBuffer,
@@ -198,6 +201,20 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
                 except Exception as e:
                     await connection_manager.send_personal(
                         websocket, ErrorBroadcast(message=str(e), code="SEEK_ERROR").model_dump(mode="json")
+                    )
+
+            elif msg_type == MessageType.PLAYBACK_RATE:
+                rate_val = msg.get("rate")
+                try:
+                    if rate_val is None:
+                        raise ValueError("Missing playback rate")
+                    rate = float(rate_val)
+                    r, s_time = await room_manager.handle_playback_rate(room_id, participant_id, rate)
+                    broadcast = PlaybackRateBroadcast(rate=r.playbackRate, position=r.position, serverTime=s_time)
+                    await connection_manager.broadcast(room_id, broadcast.model_dump(mode="json"))
+                except Exception as e:
+                    await connection_manager.send_personal(
+                        websocket, ErrorBroadcast(message=str(e), code="PLAYBACK_RATE_ERROR").model_dump(mode="json")
                     )
 
             elif msg_type == MessageType.BUFFERING:

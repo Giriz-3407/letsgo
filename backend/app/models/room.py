@@ -35,4 +35,5 @@ class RoomState(BaseModel):
     controlMode: ControlMode = ControlMode.HOST_ONLY
     pauseOnBuffer: bool = False
     participants: List[Participant] = []
+    playbackRate: float = 1.0
     createdAt: float = Field(default_factory=lambda: time.time() * 1000)

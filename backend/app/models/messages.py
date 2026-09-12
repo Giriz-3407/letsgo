@@ -10,6 +10,7 @@ class MessageType(str, Enum):
     PAUSE = "PAUSE"
     SEEK = "SEEK"
     BUFFERING = "BUFFERING"
+    PLAYBACK_RATE = "PLAYBACK_RATE"
     
     # Inbound
     JOIN = "JOIN"
@@ -72,6 +73,10 @@ class ChangeVideoMessage(BaseModel):
     type: MessageType = MessageType.CHANGE_VIDEO
     videoId: str
 
+class PlaybackRateMessage(BaseModel):
+    type: MessageType = MessageType.PLAYBACK_RATE
+    rate: float
+
 # Outbound messages
 class RoomStateBroadcast(BaseModel):
     type: MessageType = MessageType.ROOM_STATE
@@ -84,6 +89,7 @@ class RoomStateBroadcast(BaseModel):
     controlMode: ControlMode
     pauseOnBuffer: bool
     participants: List[Participant]
+    playbackRate: float = 1.0
     serverTime: float = Field(default_factory=lambda: time.time() * 1000)
 
 class PlayBroadcast(BaseModel):
@@ -100,6 +106,12 @@ class SeekBroadcast(BaseModel):
     type: MessageType = MessageType.SEEK
     position: float
     isPlaying: bool
+    serverTime: float = Field(default_factory=lambda: time.time() * 1000)
+
+class PlaybackRateBroadcast(BaseModel):
+    type: MessageType = MessageType.PLAYBACK_RATE
+    rate: float
+    position: float
     serverTime: float = Field(default_factory=lambda: time.time() * 1000)
 
 class TimeSyncReply(BaseModel):
