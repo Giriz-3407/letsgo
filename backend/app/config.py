@@ -7,18 +7,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     APP_NAME: str = "WatchTogether API"
-    DEBUG: bool = True
+    DEBUG: bool = False
     
-    # Server & CORS
+    # Server & Ports
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = int(os.getenv("PORT", "8000"))
     FRONTEND_URL: str = "http://localhost:5173"
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ]
     
     # Storage
     STORAGE_PROVIDER: str = "local"  # "local", "google_drive", "s3"
@@ -37,5 +31,18 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    def get_allowed_origins(self) -> List[str]:
+        origins = [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+        ]
+        if self.FRONTEND_URL:
+            clean_url = self.FRONTEND_URL.rstrip("/")
+            if clean_url not in origins:
+                origins.append(clean_url)
+        return origins
 
 settings = Settings()

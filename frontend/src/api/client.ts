@@ -1,4 +1,5 @@
 import { RoomState, VideoMetadata, ControlMode } from '../types';
+import { API_BASE_URL } from '../config';
 
 export interface CreateRoomParams {
   hostDisplayName: string;
@@ -32,8 +33,13 @@ class ApiClient {
     return headers;
   }
 
+  private buildUrl(path: string): string {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${API_BASE_URL}${cleanPath}`;
+  }
+
   public async createRoom(params: CreateRoomParams): Promise<CreateRoomResult> {
-    const res = await fetch('/api/rooms', {
+    const res = await fetch(this.buildUrl('/api/rooms'), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(params),
@@ -46,7 +52,7 @@ class ApiClient {
   }
 
   public async getRoom(roomId: string): Promise<RoomState> {
-    const res = await fetch(`/api/rooms/${roomId}`, {
+    const res = await fetch(this.buildUrl(`/api/rooms/${roomId}`), {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
@@ -57,7 +63,7 @@ class ApiClient {
   }
 
   public async deleteRoom(roomId: string, hostId: string): Promise<void> {
-    const res = await fetch(`/api/rooms/${roomId}?host_id=${encodeURIComponent(hostId)}`, {
+    const res = await fetch(this.buildUrl(`/api/rooms/${roomId}?host_id=${encodeURIComponent(hostId)}`), {
       method: 'DELETE',
       headers: this.getHeaders(),
     });
@@ -68,7 +74,7 @@ class ApiClient {
   }
 
   public async setRoomVideo(roomId: string, videoId: string, hostId: string): Promise<VideoMetadata> {
-    const res = await fetch(`/api/rooms/${roomId}/video`, {
+    const res = await fetch(this.buildUrl(`/api/rooms/${roomId}/video`), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ videoId, hostId }),
@@ -87,7 +93,7 @@ class ApiClient {
     controlMode?: ControlMode,
     pauseOnBuffer?: boolean
   ): Promise<any> {
-    const res = await fetch(`/api/rooms/${roomId}/settings`, {
+    const res = await fetch(this.buildUrl(`/api/rooms/${roomId}/settings`), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ hostId, controlMode, pauseOnBuffer }),
@@ -100,7 +106,7 @@ class ApiClient {
   }
 
   public async listVideos(): Promise<VideoMetadata[]> {
-    const res = await fetch('/api/videos', {
+    const res = await fetch(this.buildUrl('/api/videos'), {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
@@ -119,7 +125,7 @@ class ApiClient {
       headers['X-Session-ID'] = savedSession;
     }
 
-    const res = await fetch('/api/videos/upload', {
+    const res = await fetch(this.buildUrl('/api/videos/upload'), {
       method: 'POST',
       headers,
       body: formData,
@@ -132,7 +138,7 @@ class ApiClient {
   }
 
   public async getSessionStatus(): Promise<SessionStatus> {
-    const res = await fetch('/api/auth/session', {
+    const res = await fetch(this.buildUrl('/api/auth/session'), {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
@@ -146,7 +152,7 @@ class ApiClient {
   }
 
   public async getGoogleOAuthUrl(redirectTo: string = '/create'): Promise<string> {
-    const res = await fetch(`/api/auth/google/url?redirect_to=${encodeURIComponent(redirectTo)}`, {
+    const res = await fetch(this.buildUrl(`/api/auth/google/url?redirect_to=${encodeURIComponent(redirectTo)}`), {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
@@ -158,7 +164,7 @@ class ApiClient {
   }
 
   public async listDriveVideos(): Promise<VideoMetadata[]> {
-    const res = await fetch('/api/drive/videos', {
+    const res = await fetch(this.buildUrl('/api/drive/videos'), {
       headers: this.getHeaders(),
     });
     if (!res.ok) {
@@ -169,7 +175,7 @@ class ApiClient {
   }
 
   public async importDriveVideo(driveFileId: string): Promise<VideoMetadata> {
-    const res = await fetch(`/api/videos/drive/import?drive_file_id=${encodeURIComponent(driveFileId)}`, {
+    const res = await fetch(this.buildUrl(`/api/videos/drive/import?drive_file_id=${encodeURIComponent(driveFileId)}`), {
       method: 'POST',
       headers: this.getHeaders(),
     });
@@ -181,7 +187,7 @@ class ApiClient {
   }
 
   public async disconnectGoogle(): Promise<void> {
-    await fetch('/api/auth/google/disconnect', {
+    await fetch(this.buildUrl('/api/auth/google/disconnect'), {
       method: 'POST',
       headers: this.getHeaders(),
     });

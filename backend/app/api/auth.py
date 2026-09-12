@@ -10,18 +10,24 @@ from ..config import settings
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 drive_storage = GoogleDriveStorageProvider()
 
+def set_session_cookie(response: Response, session_id: str):
+    is_secure = settings.FRONTEND_URL.startswith("https:")
+    samesite_mode = "none" if is_secure else "lax"
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        samesite=samesite_mode,
+        secure=is_secure,
+        max_age=30 * 24 * 3600
+    )
+
 @router.get("/session")
 async def get_session_status(request: Request, response: Response):
     session_id = request.cookies.get("session_id") or request.headers.get("X-Session-ID")
     if not session_id or not session_store.get_session(session_id):
         session_id = session_store.create_session()
-        response.set_cookie(
-            key="session_id",
-            value=session_id,
-            httponly=True,
-            samesite="lax",
-            max_age=30 * 24 * 3600
-        )
+        set_session_cookie(response, session_id)
 
     has_drive = bool(session_store.get_google_access_token(session_id))
     return {
@@ -41,13 +47,7 @@ async def get_google_oauth_url(request: Request, response: Response, redirect_to
     session_id = request.cookies.get("session_id") or request.headers.get("X-Session-ID")
     if not session_id:
         session_id = session_store.create_session()
-        response.set_cookie(
-            key="session_id",
-            value=session_id,
-            httponly=True,
-            samesite="lax",
-            max_age=30 * 24 * 3600
-        )
+        set_session_cookie(response, session_id)
 
     state = f"{session_id}:{redirect_to or '/create'}"
     auth_url = google_oauth.get_authorization_url(state=state)
@@ -75,13 +75,7 @@ async def google_oauth_callback(
     # Redirect user back to the frontend page
     frontend_target = f"{settings.FRONTEND_URL.rstrip('/')}{redirect_path}?drive_connected=true"
     resp = RedirectResponse(url=frontend_target)
-    resp.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        samesite="lax",
-        max_age=30 * 24 * 3600
-    )
+    set_session_cookie(resp, session_id)
     return resp
 
 @router.post("/google/disconnect")

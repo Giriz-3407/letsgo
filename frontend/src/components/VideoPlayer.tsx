@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { VideoMetadata, ControlMode, PlaybackChangeSource } from '../types';
+import { resolveMediaUrl } from '../config';
 import { PlaybackSynchronizer } from '../sync/PlaybackSynchronizer';
 import {
   Play,
@@ -201,7 +202,7 @@ export const VideoPlayer: React.FC<Props> = ({
         ref={videoRef}
         preload="auto"
         playsInline
-        src={video.streamUrl}
+        src={resolveMediaUrl(video.streamUrl)}
         className="w-full h-full object-contain cursor-pointer"
         onClick={togglePlayPause}
       />
@@ -320,7 +321,7 @@ export const VideoPlayer: React.FC<Props> = ({
             {/* Download video button if allowed */}
             {video.downloadUrl && (
               <a
-                href={video.downloadUrl}
+                href={resolveMediaUrl(video.downloadUrl)}
                 download
                 title="Download video file"
                 className="p-2 hover:bg-white/10 rounded-lg transition text-slate-300 hover:text-white"

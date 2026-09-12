@@ -1,4 +1,5 @@
 import { InboundMessage, ControlMode } from '../types';
+import { WS_BASE_URL } from '../config';
 
 export type MessageHandler = (message: InboundMessage) => void;
 
@@ -27,9 +28,7 @@ export class WebSocketRoomClient {
     this.isConnecting = true;
     this.shouldReconnect = true;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/rooms/${this.roomId}?participant_id=${encodeURIComponent(
+    const wsUrl = `${WS_BASE_URL}/ws/rooms/${this.roomId}?participant_id=${encodeURIComponent(
       this.participantId
     )}&display_name=${encodeURIComponent(this.displayName)}`;
 

@@ -1,6 +1,6 @@
-# WatchTogether: Simple Synchronized Watch-Room Web Application
+# WatchTogether: Synchronized Watch-Room Web Application
 
-A full-stack, low-latency web application that allows multiple participants to enter a shared private "watch room" and watch movies/videos synchronously.
+A full-stack, low-latency web application that allows multiple participants to enter a private watch room and watch movies synchronously.
 
 The system is built on a fundamental architectural principle: **The high-bandwidth video data path and the low-latency playback synchronization path are strictly separated.**
 
@@ -14,16 +14,16 @@ flowchart TD
         GD["Google Drive / Local Media / S3"]
     end
 
-    subgraph Browsers ["Participant Browsers"]
-        B1["Browser 1 (Host)<br/>HTML5 Video"]
-        B2["Browser 2 (Viewer)<br/>HTML5 Video"]
-        B3["Browser 3 (Late Joiner)<br/>HTML5 Video"]
+    subgraph Vercel ["Frontend Deployment (Vercel)"]
+        B1["Browser 1 (Host)<br/>React + Vite (HTTPS)"]
+        B2["Browser 2 (Viewer)<br/>React + Vite (HTTPS)"]
+        B3["Browser 3 (Late Joiner)<br/>React + Vite (HTTPS)"]
     end
 
-    subgraph ControlServer ["Watch Room Server (FastAPI)"]
-        WS["WebSocket Room Router"]
+    subgraph Render ["Backend Deployment (Render)"]
+        WS["WebSocket Room Router (WSS)"]
         AUTH["Authoritative State Clock"]
-        MEM["In-Memory Room Store / Redis"]
+        MEM["In-Memory Room Store"]
     end
 
     %% Media Path
@@ -32,26 +32,26 @@ flowchart TD
     GD -->|"HTTP 206 Partial Content (Range Requests)"| B3
 
     %% Control Path
-    B1 <-->|"WebSocket (PLAY, PAUSE, SEEK)"| WS
-    B2 <-->|"WebSocket (State Sync, Time Sync)"| WS
-    B3 <-->|"WebSocket (Late Join State Snapshot)"| WS
+    B1 <-->|"WSS (PLAY, PAUSE, SEEK)"| WS
+    B2 <-->|"WSS (State Sync, Time Sync)"| WS
+    B3 <-->|"WSS (Late Join State Snapshot)"| WS
     WS <--> AUTH
     AUTH <--> MEM
 ```
 
 ### 1. Why Video Delivery and Synchronization Are Separated
-In naive watch-party implementations, the server proxies or transcodes the video stream to every connected user:
+In naive watch-party implementations, the server proxies or streams video bytes to every connected user:
 ```
 Storage ──> Backend Server ──> User 1, User 2, User 3...
 ```
-This quickly causes server network bottlenecks, severe CPU and memory pressure, expensive bandwidth costs, and buffering delays.
+This quickly causes severe server network bottlenecks, high CPU/memory pressure, bandwidth costs, and buffering delays.
 
 In **WatchTogether**:
-* **Video Path**: Each browser requests media directly using standard **HTTP Range Requests** (`Range: bytes=X-Y` $\rightarrow$ `206 Partial Content`). Browsers buffer and seek progressively without passing heavy video bytes through the synchronization server.
+* **Video Path**: Each browser requests media directly using standard **HTTP Range Requests** (`Range: bytes=X-Y` $\rightarrow$ `206 Partial Content`). Browsers buffer and seek progressively without routing heavy video bytes through the control server.
 * **Control Path**: The backend communicates tiny JSON messages over full-duplex WebSockets (`PLAY`, `PAUSE`, `SEEK`, `TIME_SYNC`), with payloads typically $< 150$ bytes and transmission latency $< 30\text{ms}$.
 
 ### 2. Why WebSockets Are Used
-WebSockets maintain a persistent, bidirectional, full-duplex TCP channel between the client and server. Playback commands trigger instant event broadcasts without the polling delays, header overhead, or connection handshakes inherent to HTTP request loops.
+WebSockets maintain a persistent, bidirectional, full-duplex TCP channel between client and server. Playback commands trigger instant event broadcasts without the polling delays, header overhead, or connection handshakes inherent to HTTP polling.
 
 ### 3. Why WebRTC Is Not Used
 WebRTC is designed for real-time peer-to-peer audio/video streaming (e.g. video conferencing). For synchronized watching of pre-encoded video files:
@@ -102,122 +102,104 @@ DOM `play`, `pause`, and `seeked` events are tagged with an internal state:
 $$\text{PlaybackChangeSource} \in \{\text{USER}, \text{REMOTE}, \text{SYNC}\}$$
 WebSocket messages are only dispatched when the action originates from explicit user interaction (`USER`). Programmatic adjustments initiated by remote events or sync loops do not broadcast echoed messages back to the server.
 
-### 5. Late Joiner Synchronization
-When a participant enters a room that has already been playing for 30 minutes:
-1. The WebSocket connection completes.
-2. The server delivers the authoritative `ROOM_STATE` snapshot.
-3. The late joiner computes the exact current timestamp $\text{targetPosition}$ and seeks directly there.
-4. The client UI displays `Synchronizing...` while initial media chunks are buffered, then resumes playback automatically.
+---
+
+## Production Deployment Guide
+
+### 1. Deploying Backend to Render
+
+1. Create a new **Web Service** on [Render](https://render.com).
+2. Connect your Git repository.
+3. Configure service settings:
+   * **Root Directory**: `backend`
+   * **Environment**: `Python 3`
+   * **Build Command**: `pip install -r requirements.txt`
+   * **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   * **Health Check Path**: `/api/health`
+4. Add Environment Variables in Render Dashboard:
+   ```env
+   FRONTEND_URL=https://<VERCEL_FRONTEND_DOMAIN>
+   GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=your-google-client-secret
+   GOOGLE_REDIRECT_URI=https://<RENDER_BACKEND_DOMAIN>/api/auth/google/callback
+   SESSION_SECRET=your-secure-random-secret-key
+   STORAGE_PROVIDER=local
+   ```
 
 ---
 
-## Host Controls and Permissions
+### 2. Deploying Frontend to Vercel
 
-* **Host Only Mode (Default)**: Only the room creator (or designated host) can play, pause, seek, or change video. Unauthorized requests from participants are rejected server-side with HTTP / WebSocket `403` errors.
-* **Everyone Mode**: Any connected participant can control playback. Commands are processed sequentially in server arrival order.
-* **Host Departure & Transfer**: If the host disconnects, host authority is automatically transferred to the next connected participant (`HOST_CHANGED` broadcast).
-
----
-
-## Google Drive Integration
-
-### OAuth 2.0 Security
-* Users connect Google Drive via standard OAuth 2.0 Authorization Code flow with the `drive.readonly` scope.
-* **Tokens are never exposed**: Google OAuth `access_token` and `refresh_token` are stored securely in backend session storage and are **never** transmitted to the browser or other room participants.
-
-### Media Serving Strategy
-1. **Direct HTTP Range Streaming**: For local media and imported video files.
-2. **Drive Import to Cache**: Because Google Drive private files do not natively support unauthenticated browser `<video>` range requests and apply daily rate limits per file, the host can import a Drive video into high-speed application storage (`backend/sample_media/`) with one click, providing seamless range requests to all participants.
-3. **Demo / Sample Media**: Includes bundled test videos (`Big Buck Bunny`, `MDN Flower`) for immediate local testing without needing Google Cloud credentials.
+1. Create a new Project on [Vercel](https://vercel.com).
+2. Connect your Git repository.
+3. Configure project settings:
+   * **Root Directory**: `frontend`
+   * **Framework Preset**: `Vite`
+   * **Build Command**: `npm run build`
+   * **Output Directory**: `dist`
+   * **Install Command**: `npm install`
+4. Add Environment Variables in Vercel Dashboard:
+   ```env
+   VITE_API_URL=https://<RENDER_BACKEND_DOMAIN>
+   ```
+5. Deploy. `vercel.json` will automatically ensure all client-side SPA routes (`/room/:id`, `/create`) route properly to `index.html`.
 
 ---
 
-## Getting Started (Local Development)
+### 3. Google Cloud OAuth Production Checklist
 
-### Prerequisites
-* Python 3.10+ (tested on Python 3.11 & 3.14)
-* Node.js 18+ & npm
+Configure your OAuth 2.0 Web Client credentials in the [Google Cloud Console](https://console.cloud.google.com/):
 
-### 1. Backend Setup
+```text
+[ ] OAuth consent screen configured (App name, User support email)
+[ ] Test users added (if OAuth app status is 'Testing')
+[ ] Google Drive API enabled under APIs & Services > Enabled APIs
+[ ] Scope added: https://www.googleapis.com/auth/drive.readonly
+[ ] OAuth Web Application client created
+[ ] Authorized JavaScript Origins:
+    - http://localhost:5173
+    - https://<VERCEL_FRONTEND_DOMAIN>
+[ ] Authorized Redirect URIs:
+    - http://localhost:8000/api/auth/google/callback
+    - https://<RENDER_BACKEND_DOMAIN>/api/auth/google/callback
+```
+
+---
+
+## Local Development Instructions
+
+### Backend
 ```bash
 cd backend
-
-# Install dependencies
 py -m pip install -r requirements.txt
-
-# Run automated tests
 py -m pytest -v
-
-# Start FastAPI server
 py -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-The backend API will be available at `http://localhost:8000`.
-Health check: `http://localhost:8000/api/health`.
 
-### 2. Frontend Setup
+### Frontend
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start Vite dev server
+npm run build
 npm run dev
 ```
-The frontend will be available at `http://localhost:5173`.
+
+Local URLs:
+* Frontend: `http://localhost:5173`
+* Backend API: `http://localhost:8000`
+* WebSocket: `ws://localhost:8000/ws/rooms/<ROOM_ID>`
 
 ---
 
-## Google OAuth Configuration (Optional)
+## Security Audit & Production Limitations
 
-To enable picking videos from your Google Drive:
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a project and enable the **Google Drive API**.
-3. Go to **APIs & Services > Credentials** and click **Create Credentials > OAuth client ID**.
-4. Set Application Type to **Web application**.
-5. Add Authorized redirect URIs:
-   ```
-   http://localhost:8000/api/auth/google/callback
-   ```
-6. Copy the Client ID and Client Secret into your `.env` file:
-   ```env
-   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=your-client-secret
-   GOOGLE_REDIRECT_URI=http://localhost:8000/api/auth/google/callback
-   ```
-7. Restart the backend server.
-
----
-
-## Testing Playback Synchronization
-
-1. Open `http://localhost:5173` in Browser Window 1 (Host).
-2. Click **Create Watch Room** and select the default sample video (`Big Buck Bunny`).
-3. Click **Launch Watch Room**.
-4. Click **Copy Room Invite Link** (e.g. `http://localhost:5173/room/AB7X9K`).
-5. Open the link in Browser Window 2 (Incognito or second browser).
-6. Verify:
-   * Both browsers load the movie.
-   * Host presses **Play** $\rightarrow$ both windows play immediately ($< 100\text{ms}$).
-   * Host pauses $\rightarrow$ both windows pause.
-   * Host seeks along the timeline $\rightarrow$ both windows seek to the same timestamp.
-7. Click the **Diagnostics** button on the top right to open the **Debug Panel**:
-   * View live authoritative position, local position, drift in milliseconds, and WebSocket RTT.
-   * Click **+2s Drift** or **-2s Drift** to inject artificial offset and observe how the synchronizer automatically ramps `playbackRate` (1.05x or 0.95x) to correct playback smoothly.
-
----
-
-## Security Considerations
-
-1. **Host Privileges**: Evaluated on the server. A malicious participant cannot send `{ "isHost": true }` or control playback when `HOST_ONLY` mode is active.
-2. **Session Token Isolation**: Google Drive access tokens are isolated in memory and never exposed via API responses or WebSocket broadcasts.
-3. **Input Sanitization**: Room IDs and participant display names are sanitized to prevent XSS or injection attacks.
-4. **DRM & Access Control**: The application streams media provided or authorized by the host and does not circumvent DRM or third-party access controls.
-
----
-
-## Production Deployment & Scalability
-
-* **Containerization**: `docker-compose up --build` boots both the backend and frontend in isolated containers.
-* **Horizontal Scaling**: The `RoomRepository` is abstracted behind an interface and can be backed by **Redis** and **Redis Pub/Sub** for multi-node deployments.
-* **CDN Integration**: In production, application storage points to Amazon S3, Cloudflare R2, or Google Cloud Storage fronted by a CDN (Cloudflare or AWS CloudFront), ensuring video bytes are served with maximum bandwidth directly to viewers around the globe.
+1. **Secret Isolation**:
+   * `GOOGLE_CLIENT_SECRET`, OAuth refresh tokens, and `SESSION_SECRET` are kept strictly in backend environment variables / session storage.
+   * `VITE_API_URL` is the only environment variable provided to the frontend.
+2. **CORS Hardening**:
+   * Backend CORS evaluates allowed origins dynamically from `FRONTEND_URL` and local dev origins. Wildcard `allow_origins=["*"]` with credentials is explicitly disallowed.
+3. **Session Cookies & Headers**:
+   * Backend sets `SameSite=None; Secure` for HTTPS connections, while also accepting `X-Session-ID` headers for cross-domain Vercel/Render requests.
+4. **Render Filesystem Limitation**:
+   * Imported Google Drive videos are stored in `backend/sample_media/`. On Render's free tier, local disk storage is ephemeral and resets on service restarts/deploys.
+   * *Production Migration Path*: For multi-region scale or permanent storage, implement an S3 / Cloudflare R2 / Google Cloud Storage provider adhering to the existing `StorageProvider` abstraction.

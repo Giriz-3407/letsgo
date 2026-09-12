@@ -12,10 +12,17 @@ GOOGLE_SCOPES = [
 ]
 
 class GoogleOAuthService:
-    def __init__(self):
-        self.client_id = settings.GOOGLE_CLIENT_ID
-        self.client_secret = settings.GOOGLE_CLIENT_SECRET
-        self.redirect_uri = settings.GOOGLE_REDIRECT_URI
+    @property
+    def client_id(self) -> str:
+        return settings.GOOGLE_CLIENT_ID
+
+    @property
+    def client_secret(self) -> str:
+        return settings.GOOGLE_CLIENT_SECRET
+
+    @property
+    def redirect_uri(self) -> str:
+        return settings.GOOGLE_REDIRECT_URI
 
     def is_configured(self) -> bool:
         return bool(self.client_id and self.client_secret)
@@ -24,7 +31,7 @@ class GoogleOAuthService:
         if not self.is_configured():
             raise HTTPException(
                 status_code=500,
-                detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env"
+                detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment variables."
             )
 
         params = {
