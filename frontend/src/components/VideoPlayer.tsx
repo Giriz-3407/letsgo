@@ -217,8 +217,51 @@ export const VideoPlayer: React.FC<Props> = ({
   const isSeekingRef = useRef<boolean>(false);
   const lastTapRef = useRef<{ time: number; x: number; y: number; side: 'left' | 'right' } | null>(null);
   const singleTapTimeoutRef = useRef<number | null>(null);
+  const desktopClickTimeoutRef = useRef<number | null>(null);
+  const lastDesktopClickTimeRef = useRef<number>(0);
   const doubleTapCountRef = useRef<number>(0);
   const feedbackTimeoutRef = useRef<number | null>(null);
+
+  // Helper to distinguish mobile touch browsers from desktop (Windows/Mac/Linux) browsers
+  const isMobileClient = (e?: React.MouseEvent): boolean => {
+    if (typeof window === 'undefined') return false;
+
+    // 1. If interaction explicitly came from a mouse pointer, treat as desktop
+    const pointerType = (e?.nativeEvent as PointerEvent)?.pointerType;
+    if (pointerType === 'mouse') {
+      return false;
+    }
+
+    const ua = navigator.userAgent || '';
+
+    // 2. Desktop OS check (Windows NT, Macintosh, Linux desktop)
+    // Unless in DevTools mobile emulation mode with spoofed mobile UA, desktop browsers use desktop behavior
+    const isDesktopOS = /Windows NT|Macintosh|X11; Linux x86_64/i.test(ua);
+    const isMobileToken = /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    if (isDesktopOS && !isMobileToken) {
+      return false;
+    }
+
+    // 3. Mobile device identification
+    if (isMobileToken) {
+      return true;
+    }
+    if ((navigator as any).userAgentData?.mobile) {
+      return true;
+    }
+
+    // 4. Coarse pointer without fine mouse pointer (pure mobile / tablet touchscreen)
+    if (
+      pointerType === 'touch' ||
+      (window.matchMedia &&
+        window.matchMedia('(pointer: coarse)').matches &&
+        !window.matchMedia('(pointer: fine)').matches)
+    ) {
+      return true;
+    }
+
+    return false;
+  };
 
   const triggerDoubleTapFeedback = (side: 'left' | 'right', deltaSeconds: number, customText?: string) => {
     if (feedbackTimeoutRef.current) {
@@ -241,14 +284,48 @@ export const VideoPlayer: React.FC<Props> = ({
   const handleVideoTap = (e: React.MouseEvent<HTMLDivElement>) => {
     ensureAudioRunning();
 
-    // Check if the interaction originated from a touch screen / mobile device
-    const isTouch =
-      (e.nativeEvent as PointerEvent)?.pointerType === 'touch' ||
-      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-      'ontouchstart' in window ||
-      (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0) ||
-      window.innerWidth < 1024;
+    const isMobile = isMobileClient(e);
 
+    if (!isMobile) {
+      // ==========================================
+      // DESKTOP (WINDOWS / MAC / LINUX) BROWSER:
+      // Single click: Play / Pause
+      // Double click: Maximize / Minimize (Fullscreen)
+      // Never double-tap seek or show double-tap overlays
+      // ==========================================
+      const now = Date.now();
+      const timeSinceLastClick = now - lastDesktopClickTimeRef.current;
+      const isDoubleClick = e.detail === 2 || (timeSinceLastClick > 0 && timeSinceLastClick < 280);
+
+      if (isDoubleClick) {
+        // Double click detected: Cancel pending single click play/pause and toggle fullscreen
+        if (desktopClickTimeoutRef.current) {
+          clearTimeout(desktopClickTimeoutRef.current);
+          desktopClickTimeoutRef.current = null;
+        }
+        lastDesktopClickTimeRef.current = 0;
+        toggleFullscreen();
+        return;
+      }
+
+      // First click: Debounce slightly so double click can cancel play/pause cleanly
+      lastDesktopClickTimeRef.current = now;
+      if (desktopClickTimeoutRef.current) {
+        clearTimeout(desktopClickTimeoutRef.current);
+      }
+      desktopClickTimeoutRef.current = window.setTimeout(() => {
+        desktopClickTimeoutRef.current = null;
+        lastDesktopClickTimeRef.current = 0;
+        togglePlayPause();
+      }, 240);
+      return;
+    }
+
+    // ==========================================
+    // MOBILE BROWSER (TOUCH):
+    // Single tap: Show / Hide Controls (does NOT pause video)
+    // Double tap left / right: Seek -10s / +10s with badge
+    // ==========================================
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
@@ -258,7 +335,7 @@ export const VideoPlayer: React.FC<Props> = ({
 
     const prevTap = lastTapRef.current;
 
-    // Detect double tap (or rapid subsequent taps on the same side within 350ms)
+    // Detect double tap on mobile (rapid subsequent taps on the same side within 350ms)
     if (
       prevTap &&
       now - prevTap.time < 350 &&
@@ -294,34 +371,26 @@ export const VideoPlayer: React.FC<Props> = ({
       clearTimeout(singleTapTimeoutRef.current);
     }
 
-    // Schedule single tap resolution
+    // Schedule mobile single tap resolution
     singleTapTimeoutRef.current = window.setTimeout(() => {
       singleTapTimeoutRef.current = null;
       lastTapRef.current = null;
       doubleTapCountRef.current = 0;
 
-      if (isTouch) {
-        // ON MOBILE:
-        // Clicking anywhere on the screen MUST NOT pause the video directly.
-        // Instead, single tap toggles controls visibility with auto-hide timer.
-        if (controlsTimeoutRef.current) {
-          clearTimeout(controlsTimeoutRef.current);
-          controlsTimeoutRef.current = null;
-        }
-        setShowControls((prev) => {
-          const next = !prev;
-          if (next && isPlaying) {
-            controlsTimeoutRef.current = window.setTimeout(() => {
-              setShowControls(false);
-            }, 3500);
-          }
-          return next;
-        });
-      } else {
-        // ON DESKTOP (MOUSE):
-        // Single click on video toggles play/pause as expected on desktop
-        togglePlayPause();
+      // Single tap on mobile toggles controls visibility with auto-hide timer
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+        controlsTimeoutRef.current = null;
       }
+      setShowControls((prev) => {
+        const next = !prev;
+        if (next && isPlaying) {
+          controlsTimeoutRef.current = window.setTimeout(() => {
+            setShowControls(false);
+          }, 3500);
+        }
+        return next;
+      });
     }, 260);
   };
 
@@ -388,6 +457,10 @@ export const VideoPlayer: React.FC<Props> = ({
       if (singleTapTimeoutRef.current) {
         clearTimeout(singleTapTimeoutRef.current);
         singleTapTimeoutRef.current = null;
+      }
+      if (desktopClickTimeoutRef.current) {
+        clearTimeout(desktopClickTimeoutRef.current);
+        desktopClickTimeoutRef.current = null;
       }
       if (feedbackTimeoutRef.current) {
         clearTimeout(feedbackTimeoutRef.current);
@@ -515,12 +588,15 @@ export const VideoPlayer: React.FC<Props> = ({
   }, [isSpeedMenuOpen]);
 
   // Controls auto-hide timer
-  const handleMouseMove = () => {
+  const handleMouseMove = (e?: React.MouseEvent) => {
     // Ignore synthetic mousemove events on touch devices so they don't override touch tap toggle logic
+    if (e && (e.nativeEvent as PointerEvent)?.pointerType === 'touch') {
+      return;
+    }
     if (
-      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-      'ontouchstart' in window ||
-      (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
+      window.matchMedia &&
+      window.matchMedia('(pointer: coarse)').matches &&
+      !window.matchMedia('(pointer: fine)').matches
     ) {
       return;
     }
@@ -653,6 +729,9 @@ export const VideoPlayer: React.FC<Props> = ({
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         handleVolumeDelta(-0.05);
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullscreen();
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         toggleMute();
