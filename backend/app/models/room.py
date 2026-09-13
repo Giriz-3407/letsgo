@@ -28,6 +28,7 @@ class VideoMetadata(BaseModel):
 class RoomState(BaseModel):
     roomId: str
     hostId: str
+    ownerId: Optional[str] = None
     video: Optional[VideoMetadata] = None
     isPlaying: bool = False
     position: float = 0.0

@@ -152,3 +152,51 @@ async def test_playback_rate_permissions_and_validation(manager: RoomManager):
     bob_room, _ = await manager.handle_playback_rate("ROOM_PERM_RATE", "bob", 2.0)
     assert bob_room.playbackRate == 2.0
 
+@pytest.mark.asyncio
+async def test_owner_retains_and_reclaims_host_role_and_seeks(manager: RoomManager):
+    """
+    Verifies that:
+    1. If a viewer (Bob) connects before the host (Alice), Bob does NOT steal host role.
+    2. Alice connects and is confirmed host.
+    3. Alice seeks -> success. Bob seeks in HOST_ONLY -> permission denied.
+    4. Alice refreshes (disconnects then reconnects) -> Alice reclaims host immediately.
+    5. Alice seeks again -> success.
+    """
+    room = await manager.create_room(
+        room_id="ROOM_OWNER",
+        host_id="host_alice",
+        host_display_name="Alice",
+        control_mode=ControlMode.HOST_ONLY
+    )
+    assert room.hostId == "host_alice"
+    assert room.ownerId == "host_alice"
+
+    # 1. Viewer Bob connects BEFORE host Alice connects
+    r_bob, bob, new_h = await manager.handle_join("ROOM_OWNER", "viewer_bob", "Bob")
+    assert bob.isHost is False
+    assert r_bob.hostId == "host_alice"
+    assert new_h is None
+
+    # 2. Host Alice connects
+    r_alice, alice, _ = await manager.handle_join("ROOM_OWNER", "host_alice", "Alice")
+    assert alice.isHost is True
+    assert r_alice.hostId == "host_alice"
+
+    # 3. Alice can seek; Bob cannot seek in HOST_ONLY mode
+    sought_room, _ = await manager.handle_seek("ROOM_OWNER", "host_alice", 120.0)
+    assert sought_room.position == 120.0
+
+    with pytest.raises(Exception) as exc_info:
+        await manager.handle_seek("ROOM_OWNER", "viewer_bob", 200.0)
+    assert "Permission denied" in str(exc_info.value)
+
+    # 4. Alice refreshes browser: disconnects then reconnects
+    await manager.handle_leave("ROOM_OWNER", "host_alice")
+    r_reconnect, alice_reconnected, new_h2 = await manager.handle_join("ROOM_OWNER", "host_alice", "Alice")
+    assert alice_reconnected.isHost is True
+    assert r_reconnect.hostId == "host_alice"
+
+    # 5. Alice seeks after reconnect -> success
+    sought_after_reconnect, _ = await manager.handle_seek("ROOM_OWNER", "host_alice", 300.0)
+    assert sought_after_reconnect.position == 300.0
+

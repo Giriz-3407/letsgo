@@ -81,15 +81,7 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
 
     unsubs.push(
       wsClient.on('ROOM_STATE', (state: any) => {
-        setRoomState((prev) => {
-          // Reject stale state update if an in-flight newer seek or play occurred
-          if (
-            prev?.lastStateChangeServerTime &&
-            state.lastStateChangeServerTime &&
-            state.lastStateChangeServerTime < prev.lastStateChangeServerTime
-          ) {
-            return prev;
-          }
+        setRoomState(() => {
           synchronizer.updateRoomState(state);
           return state;
         });
@@ -100,13 +92,6 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('PLAY', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
-          if (
-            prev.lastStateChangeServerTime &&
-            msg.serverTime &&
-            msg.serverTime < prev.lastStateChangeServerTime
-          ) {
-            return prev;
-          }
           const updated = {
             ...prev,
             isPlaying: true,
@@ -123,13 +108,6 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('PAUSE', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
-          if (
-            prev.lastStateChangeServerTime &&
-            msg.serverTime &&
-            msg.serverTime < prev.lastStateChangeServerTime
-          ) {
-            return prev;
-          }
           const updated = {
             ...prev,
             isPlaying: false,
@@ -146,13 +124,6 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('SEEK', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
-          if (
-            prev.lastStateChangeServerTime &&
-            msg.serverTime &&
-            msg.serverTime < prev.lastStateChangeServerTime
-          ) {
-            return prev;
-          }
           const updated = {
             ...prev,
             isPlaying: msg.isPlaying !== undefined ? msg.isPlaying : prev.isPlaying,
@@ -169,13 +140,6 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       wsClient.on('PLAYBACK_RATE', (msg) => {
         setRoomState((prev) => {
           if (!prev) return prev;
-          if (
-            prev.lastStateChangeServerTime &&
-            msg.serverTime &&
-            msg.serverTime < prev.lastStateChangeServerTime
-          ) {
-            return prev;
-          }
           const updated = {
             ...prev,
             playbackRate: msg.rate,
@@ -315,12 +279,12 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
   return (
     <div className="min-h-screen bg-[#09090b] text-neutral-100 flex flex-col justify-between selection:bg-neutral-800 selection:text-neutral-100">
       {/* Minimal Top Header */}
-      <header className="px-6 py-4 border-b border-white/[0.06] bg-[#09090b] sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="px-3 sm:px-6 py-2.5 sm:py-4 border-b border-white/[0.06] bg-[#09090b] sticky top-0 z-30">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
             <button
               onClick={handleLeave}
-              className="p-1 text-neutral-400 hover:text-white rounded transition-colors"
+              className="p-1 text-neutral-400 hover:text-white rounded transition-colors flex-shrink-0"
               title="Leave Room"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -328,7 +292,7 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
 
             <span
               onClick={() => onNavigate('home')}
-              className="text-xs font-semibold tracking-tight text-neutral-300 hover:text-white cursor-pointer transition-colors"
+              className="text-xs font-semibold tracking-tight text-neutral-300 hover:text-white cursor-pointer transition-colors whitespace-nowrap"
             >
               WatchTogether
             </span>
@@ -338,18 +302,19 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
             <button
               onClick={copyRoomLink}
               title="Copy room invite link"
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-mono text-neutral-300 hover:text-white hover:bg-white/[0.04] transition-colors"
+              className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded text-xs font-mono text-neutral-300 hover:text-white hover:bg-white/[0.04] transition-colors whitespace-nowrap flex-shrink-0"
             >
-              <span>Room {roomId}</span>
+              <span className="text-neutral-400">Room</span>
+              <span>{roomId}</span>
               {copiedLink ? (
-                <Check className="w-3 h-3 text-neutral-200" />
+                <Check className="w-3 h-3 text-neutral-200 flex-shrink-0" />
               ) : (
-                <Copy className="w-3 h-3 text-neutral-500" />
+                <Copy className="w-3 h-3 text-neutral-500 flex-shrink-0" />
               )}
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
             <SyncStatusBadge status={syncStatus} driftMs={syncStats?.driftMs} />
 
             <button
@@ -369,7 +334,7 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
       </header>
 
       {/* Main Cinema Viewport */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 w-full flex-1 flex flex-col items-center">
+      <main className="max-w-6xl mx-auto px-2 sm:px-6 py-4 sm:py-6 w-full flex-1 flex flex-col items-center">
         {/* Dominant Movie Player */}
         <div className="w-full max-w-5xl">
           <VideoPlayer

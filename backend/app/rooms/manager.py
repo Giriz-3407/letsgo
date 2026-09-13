@@ -53,6 +53,7 @@ class RoomManager:
         room = RoomState(
             roomId=room_id,
             hostId=host_id,
+            ownerId=host_id,
             video=video,
             isPlaying=False,
             position=0.0,
@@ -90,18 +91,29 @@ class RoomManager:
             existing.connected = True
             existing.displayName = display_name
             participant = existing
+            # If the room owner / creator reconnects, always ensure they reclaim host role
+            if getattr(room, "ownerId", None) == participant_id or room.hostId == participant_id:
+                if room.hostId != participant_id:
+                    for p in room.participants:
+                        p.isHost = (p.id == participant_id)
+                    room.hostId = participant_id
+                    new_host_id = participant_id
+                else:
+                    existing.isHost = True
         else:
-            is_first = len([p for p in room.participants if p.connected]) == 0
-            is_host = (room.hostId == participant_id) or is_first
+            # A new participant is ONLY host if they are the designated owner/host
+            is_owner = (getattr(room, "ownerId", None) == participant_id) or (room.hostId == participant_id)
             participant = Participant(
                 id=participant_id,
                 displayName=display_name,
-                isHost=is_host,
+                isHost=is_owner,
                 connected=True,
                 joinedAt=now_ms
             )
             room.participants.append(participant)
-            if is_first and room.hostId != participant_id:
+            if is_owner and room.hostId != participant_id:
+                for p in room.participants:
+                    p.isHost = (p.id == participant_id)
                 room.hostId = participant_id
                 new_host_id = participant_id
 

@@ -8,6 +8,14 @@ const getApiBaseUrl = (): string => {
   if (envUrl && envUrl.trim() !== '') {
     return envUrl.trim().replace(/\/+$/, '');
   }
+  if (typeof window !== 'undefined' && window.location) {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    // When accessing from mobile on local LAN (e.g. 192.168.x.x), connect to that host on port 8000
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `${protocol}//${hostname}:8000`;
+    }
+  }
   return 'http://localhost:8000';
 };
 

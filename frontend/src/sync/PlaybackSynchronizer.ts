@@ -84,11 +84,14 @@ export class PlaybackSynchronizer {
 
   /**
    * Request a synchronized seek across the room.
-   * Rebases local expected position and transmits authoritative SEEK to server.
-   * The actual video seek executes when the server broadcasts the authoritative SEEK.
+   * Immediately seeks local video without echo loop, rebases state,
+   * and transmits authoritative SEEK to server.
    */
   public requestSeek(targetPosition: number): void {
     this.notifyUserSeek(targetPosition);
+    if (this.video && Math.abs(this.video.currentTime - targetPosition) > 0.05) {
+      this.executeProgrammaticSeek(targetPosition, PlaybackChangeSource.REMOTE);
+    }
     this.wsClient.sendSeek(targetPosition);
     this.publishStats();
   }
@@ -116,7 +119,6 @@ export class PlaybackSynchronizer {
       this.currentRoomState = {
         ...this.currentRoomState,
         position: targetPosition,
-        lastStateChangeServerTime: this.clockSync.getEstimatedServerTime(),
       };
     }
   }
@@ -128,7 +130,7 @@ export class PlaybackSynchronizer {
     }
     this.driftCorrectionFactor = 1.0;
     this.applyEffectivePlaybackRate();
-    this.synchronizeToState(state, true);
+    this.synchronizeToState(state, false);
   }
 
   public getCurrentState(): RoomState | null {
@@ -176,6 +178,7 @@ export class PlaybackSynchronizer {
 
     // If already very close to target, skip redundant seek to avoid decoder stutter
     if (Math.abs(this.video.currentTime - targetPosition) < 0.05) {
+      this.isUserSeeking = false;
       this.driftCorrectionFactor = 1.0;
       this.applyEffectivePlaybackRate();
       this.lastSeekTime = Date.now();
@@ -361,6 +364,7 @@ export class PlaybackSynchronizer {
 
     this.video.addEventListener('seeked', () => {
       this.lastSeekTime = Date.now();
+      this.isUserSeeking = false;
       if (this.programmaticSeekCount > 0) {
         this.programmaticSeekCount--;
         if (this.programmaticSeekCount === 0) {
@@ -368,7 +372,6 @@ export class PlaybackSynchronizer {
         }
         // Programmatic seek completed: DO NOT send seek over websocket
       } else if (this.changeSource === PlaybackChangeSource.USER && this.video) {
-        this.isUserSeeking = false;
         this.wsClient.sendSeek(this.video.currentTime);
       }
       this.publishStats();
