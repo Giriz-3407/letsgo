@@ -11,6 +11,10 @@ class MessageType(str, Enum):
     SEEK = "SEEK"
     BUFFERING = "BUFFERING"
     PLAYBACK_RATE = "PLAYBACK_RATE"
+    SEEK_PREPARE = "SEEK_PREPARE"
+    SEEK_READY = "SEEK_READY"
+    SEEK_RESUME = "SEEK_RESUME"
+    MEDIA_LOADED = "MEDIA_LOADED"
     
     # Inbound
     JOIN = "JOIN"
@@ -77,6 +81,14 @@ class PlaybackRateMessage(BaseModel):
     type: MessageType = MessageType.PLAYBACK_RATE
     rate: float
 
+class SeekReadyMessage(BaseModel):
+    type: MessageType = MessageType.SEEK_READY
+    operationId: int
+
+class MediaLoadedMessage(BaseModel):
+    type: MessageType = MessageType.MEDIA_LOADED
+    hasMedia: bool = True
+
 # Outbound messages
 class RoomStateBroadcast(BaseModel):
     type: MessageType = MessageType.ROOM_STATE
@@ -90,6 +102,24 @@ class RoomStateBroadcast(BaseModel):
     pauseOnBuffer: bool
     participants: List[Participant]
     playbackRate: float = 1.0
+    serverTime: float = Field(default_factory=lambda: time.time() * 1000)
+    seekOperationId: int = 0
+    seekBarrierActive: bool = False
+    seekTargetPosition: Optional[float] = None
+    seekReadyParticipants: List[str] = []
+
+class SeekPrepareBroadcast(BaseModel):
+    type: MessageType = MessageType.SEEK_PREPARE
+    operationId: int
+    position: float
+    isPlaying: bool
+    serverTime: float = Field(default_factory=lambda: time.time() * 1000)
+
+class SeekResumeBroadcast(BaseModel):
+    type: MessageType = MessageType.SEEK_RESUME
+    operationId: int
+    position: float
+    isPlaying: bool
     serverTime: float = Field(default_factory=lambda: time.time() * 1000)
 
 class PlayBroadcast(BaseModel):

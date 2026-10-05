@@ -4,8 +4,11 @@ from fastapi import APIRouter, HTTPException, Header, UploadFile, File, Request
 from fastapi.responses import FileResponse, StreamingResponse
 import aiofiles
 
+from pydantic import BaseModel
+
 from ..storage.local import LocalStorageProvider
 from ..storage.google_drive import GoogleDriveStorageProvider
+from ..storage.r2 import r2_service
 from ..models.room import VideoMetadata
 from ..auth.session import session_store
 from ..config import settings
@@ -13,6 +16,31 @@ from ..config import settings
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 local_storage = LocalStorageProvider()
 drive_storage = GoogleDriveStorageProvider()
+
+class R2PlayUrlRequest(BaseModel):
+    key: str
+    expiresIn: Optional[int] = 3600
+
+class R2PlayUrlResponse(BaseModel):
+    url: str
+    key: str
+    expiresIn: int
+
+@router.get("/r2")
+async def list_r2_videos():
+    return await r2_service.list_videos()
+
+@router.post("/r2/play-url", response_model=R2PlayUrlResponse)
+async def get_r2_play_url(req: R2PlayUrlRequest):
+    expires = req.expiresIn or 3600
+    url = await r2_service.generate_presigned_playback_url(req.key, expires_in=expires)
+    return R2PlayUrlResponse(url=url, key=req.key, expiresIn=expires)
+
+@router.get("/r2/{object_key:path}/play-url", response_model=R2PlayUrlResponse)
+async def get_r2_play_url_by_path(object_key: str):
+    expires = 3600
+    url = await r2_service.generate_presigned_playback_url(object_key, expires_in=expires)
+    return R2PlayUrlResponse(url=url, key=object_key, expiresIn=expires)
 
 @router.get("", response_model=List[VideoMetadata])
 async def list_videos():

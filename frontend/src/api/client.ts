@@ -1,4 +1,4 @@
-import { RoomState, VideoMetadata, ControlMode } from '../types';
+import { RoomState, VideoMetadata, ControlMode, R2VideoItem } from '../types';
 import { API_BASE_URL } from '../config';
 
 export interface CreateRoomParams {
@@ -209,6 +209,30 @@ class ApiClient {
       method: 'POST',
       headers: this.getHeaders(),
     });
+  }
+
+  public async listR2Videos(): Promise<R2VideoItem[]> {
+    const res = await fetch(this.buildUrl('/api/videos/r2'), {
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to list R2 videos');
+    }
+    return res.json();
+  }
+
+  public async getR2PlayUrl(key: string): Promise<{ url: string; key: string; expiresIn: number }> {
+    const res = await fetch(this.buildUrl('/api/videos/r2/play-url'), {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ key }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to obtain R2 playback URL');
+    }
+    return res.json();
   }
 }
 

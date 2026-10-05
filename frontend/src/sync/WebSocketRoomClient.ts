@@ -122,6 +122,14 @@ export class WebSocketRoomClient {
     this.send({ type: 'SEEK', position });
   }
 
+  public sendSeekReady(operationId: number): void {
+    this.send({ type: 'SEEK_READY', operationId });
+  }
+
+  public sendMediaLoaded(hasMedia: boolean = true): void {
+    this.send({ type: 'MEDIA_LOADED', hasMedia });
+  }
+
   public sendPlaybackRate(rate: number): void {
     this.send({ type: 'PLAYBACK_RATE', rate });
   }

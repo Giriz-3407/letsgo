@@ -14,6 +14,7 @@ class Participant(BaseModel):
     connected: bool = True
     joinedAt: float = Field(default_factory=lambda: time.time() * 1000)
     isBuffering: bool = False
+    hasMedia: bool = False
 
 class VideoMetadata(BaseModel):
     id: str
@@ -38,3 +39,9 @@ class RoomState(BaseModel):
     participants: List[Participant] = []
     playbackRate: float = 1.0
     createdAt: float = Field(default_factory=lambda: time.time() * 1000)
+    
+    # Seek barrier / generation state
+    seekOperationId: int = 0
+    seekBarrierActive: bool = False
+    seekTargetPosition: Optional[float] = None
+    seekReadyParticipants: List[str] = []

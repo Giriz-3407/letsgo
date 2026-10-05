@@ -18,6 +18,7 @@ class MockVideoElement {
   public paused: boolean = true;
   public playbackRate: number = 1.0;
   public readyState: number = 4; // HAVE_ENOUGH_DATA
+  public seeking: boolean = false;
   public buffered = {
     length: 1,
     start: (_i: number) => 0,
@@ -31,7 +32,9 @@ class MockVideoElement {
 
   public set currentTime(val: number) {
     this._currentTime = val;
+    this.seeking = true;
     this.dispatchEvent('seeking');
+    this.seeking = false;
     this.dispatchEvent('seeked');
   }
 
@@ -105,6 +108,14 @@ class MockWebSocketRoomClient {
 
   public sendSeek(position: number): void {
     this.send({ type: 'SEEK', position });
+  }
+
+  public sendSeekReady(operationId: number): void {
+    this.send({ type: 'SEEK_READY', operationId });
+  }
+
+  public sendMediaLoaded(hasMedia: boolean = true): void {
+    this.send({ type: 'MEDIA_LOADED', hasMedia });
   }
 
   public sendPlaybackRate(rate: number): void {
@@ -613,4 +624,219 @@ describe('WatchTogether Local-File Playback & Synchronization Test Suite', () =>
     // Offset must NOT change because t1 < lastHandledT1
     assert.equal(clock.getOffset(), offsetAfterPing2, 'Stale ping must be discarded');
   });
+
+  test('Seek Barrier Flow: SEEK_PREPARE freezes timeline, client reports SEEK_READY, and resumes on SEEK_RESUME', () => {
+    synchronizer.attachVideo(mockVideo as any);
+    const now = Date.now();
+
+    const initialState: RoomState = {
+      roomId: 'ROOM1',
+      hostId: 'alice',
+      isPlaying: true,
+      position: 100,
+      lastStateChangeServerTime: now,
+      controlMode: 'HOST_ONLY',
+      pauseOnBuffer: false,
+      participants: [{ id: 'alice', displayName: 'Alice', isHost: true, connected: true, joinedAt: now, hasMedia: true }],
+      serverTime: now,
+      video: null,
+    };
+    synchronizer.updateRoomState(initialState);
+    mockVideo.paused = false;
+    mockVideo.currentTime = 100;
+    wsClient.sentMessages = [];
+
+    // Alice requests seek to 500s
+    synchronizer.requestSeek(500);
+    const seekMsg = wsClient.sentMessages.find((m) => m.type === 'SEEK');
+    assert.ok(seekMsg, 'Should send SEEK message');
+    assert.equal(seekMsg.position, 500);
+
+    // Server broadcasts SEEK_PREPARE (opId = 1)
+    wsClient.sentMessages = [];
+    synchronizer.handleSeekPrepare(1, 500, true, now);
+
+    assert.equal(synchronizer.isSeekBarrierInProgress(), true, 'Barrier should be active');
+    assert.equal(synchronizer.getCurrentSeekOperationId(), 1);
+    assert.equal(mockVideo.paused, true, 'Video must be paused during prepare barrier');
+    assert.equal(mockVideo.currentTime, 500, 'Video must seek to 500');
+
+    // Authoritative position must remain frozen at 500s even if time passes
+    const authPos = synchronizer.calculateAuthoritativePosition();
+    assert.equal(authPos, 500, 'Authoritative position must be frozen at target during barrier');
+
+    // Because mockVideo is ready (readyState=4, seeking=false), it reports SEEK_READY
+    const readyMsg = wsClient.sentMessages.find((m) => m.type === 'SEEK_READY');
+    assert.ok(readyMsg, 'Client must send SEEK_READY');
+    assert.equal(readyMsg.operationId, 1);
+
+    // Server sends SEEK_RESUME (opId = 1)
+    wsClient.sentMessages = [];
+    synchronizer.handleSeekResume(1, 500, true, now + 500);
+
+    assert.equal(synchronizer.isSeekBarrierInProgress(), false, 'Barrier must be cleared');
+    assert.equal(mockVideo.paused, false, 'Video must resume playing');
+
+    // Programmatic play must NOT have sent a user PLAY message
+    const playEcho = wsClient.sentMessages.filter((m) => m.type === 'PLAY');
+    assert.equal(playEcho.length, 0, 'Programmatic resume must not echo PLAY');
+  });
+
+  test('Stale Operation ID: Older SEEK_READY and SEEK_RESUME are rejected and do not interfere', () => {
+    synchronizer.attachVideo(mockVideo as any);
+    const now = Date.now();
+
+    // Prepare seek op 2
+    synchronizer.handleSeekPrepare(2, 200, true, now);
+    assert.equal(synchronizer.getCurrentSeekOperationId(), 2);
+    assert.equal(synchronizer.isSeekBarrierInProgress(), true);
+
+    // An older resume from op 1 arrives delayed
+    synchronizer.handleSeekResume(1, 100, true, now);
+    // Must remain at op 2 and barrier must stay active
+    assert.equal(synchronizer.isSeekBarrierInProgress(), true, 'Older resume must be ignored');
+    assert.equal(synchronizer.getCurrentSeekOperationId(), 2);
+
+    // Now a newer seek op 3 arrives
+    synchronizer.handleSeekPrepare(3, 350, true, now + 100);
+    assert.equal(synchronizer.getCurrentSeekOperationId(), 3);
+    assert.equal(mockVideo.currentTime, 350);
+
+    // Older op 2 resume arrives
+    synchronizer.handleSeekResume(2, 200, true, now + 200);
+    assert.equal(synchronizer.isSeekBarrierInProgress(), true, 'Op 2 resume must be ignored');
+
+    // Correct op 3 resume arrives
+    synchronizer.handleSeekResume(3, 350, true, now + 300);
+    assert.equal(synchronizer.isSeekBarrierInProgress(), false, 'Op 3 resume resolves barrier');
+    assert.equal(mockVideo.paused, false);
+  });
+
+  test('Mixed Room: Local fast client waits paused while R2 buffering client loads; both resume together', () => {
+    // Client A: Local media (instantly ready)
+    const wsA = new MockWebSocketRoomClient();
+    const clockA = new ClockSynchronizer();
+    const syncA = new PlaybackSynchronizer(wsA as any, clockA);
+    const videoA = new MockVideoElement();
+    videoA.readyState = 4;
+    videoA.seeking = false;
+    syncA.attachVideo(videoA as any);
+
+    // Client B: R2 media (remote network buffering)
+    const wsB = new MockWebSocketRoomClient();
+    const clockB = new ClockSynchronizer();
+    const syncB = new PlaybackSynchronizer(wsB as any, clockB);
+    const videoB = new MockVideoElement();
+    videoB.readyState = 1; // HAVE_METADATA - not ready yet
+    videoB.seeking = true;
+    syncB.attachVideo(videoB as any);
+
+    const now = Date.now();
+    wsA.sentMessages = [];
+    wsB.sentMessages = [];
+
+    // Server broadcasts SEEK_PREPARE to both clients for opId = 10, pos = 450
+    syncA.handleSeekPrepare(10, 450, true, now);
+    syncB.handleSeekPrepare(10, 450, true, now);
+
+    // Client A is instantly ready and sends SEEK_READY
+    const readyA = wsA.sentMessages.find((m) => m.type === 'SEEK_READY');
+    assert.ok(readyA, 'Client A with local file sends SEEK_READY immediately');
+    assert.equal(readyA.operationId, 10);
+    assert.equal(videoA.paused, true, 'Client A MUST stay paused while waiting for Client B');
+
+    // Client B is NOT ready yet, so it has NOT sent SEEK_READY
+    const readyBBefore = wsB.sentMessages.find((m) => m.type === 'SEEK_READY');
+    assert.equal(readyBBefore, undefined, 'Client B buffering in R2 must not send SEEK_READY yet');
+
+    // Simulate R2 network buffering finishing after some time
+    videoB.readyState = 4;
+    videoB.seeking = false;
+    videoB.dispatchEvent('canplay');
+
+    const readyBAfter = wsB.sentMessages.find((m) => m.type === 'SEEK_READY');
+    assert.ok(readyBAfter, 'Client B sends SEEK_READY once canplay/buffering completes');
+    assert.equal(readyBAfter.operationId, 10);
+
+    // Server collects both readiness reports and broadcasts SEEK_RESUME(10, 450, true)
+    syncA.handleSeekResume(10, 450, true, now + 1200);
+    syncB.handleSeekResume(10, 450, true, now + 1200);
+
+    assert.equal(videoA.paused, false, 'Client A resumes on SEEK_RESUME');
+    assert.equal(videoB.paused, false, 'Client B resumes on SEEK_RESUME');
+    assert.equal(videoA.currentTime, 450);
+    assert.equal(videoB.currentTime, 450);
+  });
+
+  test('Relative Seek: +10 and -10 initiate room-wide seek barrier without echo loops', () => {
+    synchronizer.attachVideo(mockVideo as any);
+    mockVideo.currentTime = 50;
+
+    // User clicks +10
+    synchronizer.requestSeek(60);
+    const seekMsgPlus = wsClient.sentMessages.find((m) => m.type === 'SEEK' && m.position === 60);
+    assert.ok(seekMsgPlus, '+10 triggers SEEK to 60s');
+
+    // User clicks -10
+    synchronizer.requestSeek(40);
+    const seekMsgMinus = wsClient.sentMessages.find((m) => m.type === 'SEEK' && m.position === 40);
+    assert.ok(seekMsgMinus, '-10 triggers SEEK to 40s');
+  });
+
+  test('Drift check is suppressed during active seek barrier', () => {
+    synchronizer.attachVideo(mockVideo as any);
+    const now = Date.now();
+
+    synchronizer.handleSeekPrepare(1, 200, true, now);
+    assert.equal(synchronizer.isSeekBarrierInProgress(), true);
+
+    // Mock video currentTime at 200
+    mockVideo.currentTime = 200;
+
+    // Artificially change lastSeekTime so post-seek stabilization passes
+    (synchronizer as any).lastSeekTime = now - 5000;
+
+    // Call checkAndCorrectDrift
+    synchronizer.checkAndCorrectDrift();
+
+    // Verify video didn't change and drift factor didn't change
+    assert.equal(mockVideo.playbackRate, 1.0);
+    assert.equal(mockVideo.currentTime, 200);
+  });
+
+  test('Late joiner receives seekBarrierActive in RoomState and participates in barrier', () => {
+    synchronizer.attachVideo(mockVideo as any);
+    const now = Date.now();
+
+    wsClient.sentMessages = [];
+
+    // State arrives with active seek barrier
+    const barrierState: RoomState = {
+      roomId: 'ROOM1',
+      hostId: 'alice',
+      isPlaying: false,
+      position: 888,
+      lastStateChangeServerTime: now,
+      controlMode: 'HOST_ONLY',
+      pauseOnBuffer: false,
+      participants: [],
+      serverTime: now,
+      video: null,
+      seekBarrierActive: true,
+      seekOperationId: 5,
+      seekTargetPosition: 888,
+    };
+
+    synchronizer.updateRoomState(barrierState);
+
+    assert.equal(synchronizer.isSeekBarrierInProgress(), true);
+    assert.equal(synchronizer.getCurrentSeekOperationId(), 5);
+    assert.equal(mockVideo.currentTime, 888);
+    assert.equal(mockVideo.paused, true);
+
+    const readyMsg = wsClient.sentMessages.find((m) => m.type === 'SEEK_READY');
+    assert.ok(readyMsg, 'Late joiner reports ready for active barrier');
+    assert.equal(readyMsg.operationId, 5);
+  });
 });
+

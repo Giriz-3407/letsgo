@@ -11,6 +11,8 @@ from ..models.messages import (
     PlayBroadcast,
     PauseBroadcast,
     SeekBroadcast,
+    SeekPrepareBroadcast,
+    SeekResumeBroadcast,
     PlaybackRateBroadcast,
     TimeSyncReply,
     ParticipantJoinedBroadcast,
@@ -117,6 +119,10 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
         pauseOnBuffer=updated_room.pauseOnBuffer,
         participants=updated_room.participants,
         serverTime=now_ms,
+        seekOperationId=getattr(updated_room, "seekOperationId", 0),
+        seekBarrierActive=getattr(updated_room, "seekBarrierActive", False),
+        seekTargetPosition=getattr(updated_room, "seekTargetPosition", None),
+        seekReadyParticipants=getattr(updated_room, "seekReadyParticipants", []),
     )
     await connection_manager.send_personal(websocket, state_msg.model_dump(mode="json"))
 
@@ -166,6 +172,10 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
                         pauseOnBuffer=r.pauseOnBuffer,
                         participants=r.participants,
                         serverTime=cur_time,
+                        seekOperationId=getattr(r, "seekOperationId", 0),
+                        seekBarrierActive=getattr(r, "seekBarrierActive", False),
+                        seekTargetPosition=getattr(r, "seekTargetPosition", None),
+                        seekReadyParticipants=getattr(r, "seekReadyParticipants", []),
                     )
                     await connection_manager.send_personal(websocket, s_msg.model_dump(mode="json"))
 
@@ -196,12 +206,50 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
                 pos = float(msg.get("position", 0.0))
                 try:
                     r, s_time = await room_manager.handle_seek(room_id, participant_id, pos)
-                    broadcast = SeekBroadcast(position=r.position, isPlaying=r.isPlaying, serverTime=s_time)
-                    await connection_manager.broadcast(room_id, broadcast.model_dump(mode="json"))
+                    # Broadcast SEEK_PREPARE to freeze authoritative timeline and initiate client readiness barrier
+                    prepare_bc = SeekPrepareBroadcast(
+                        operationId=r.seekOperationId,
+                        position=r.position,
+                        isPlaying=r.isPlaying,
+                        serverTime=s_time
+                    )
+                    await connection_manager.broadcast(room_id, prepare_bc.model_dump(mode="json"))
+
+                    # If no other participants are required to wait, resume immediately
+                    if not r.seekBarrierActive:
+                        resume_bc = SeekResumeBroadcast(
+                            operationId=r.seekOperationId,
+                            position=r.position,
+                            isPlaying=r.isPlaying,
+                            serverTime=s_time
+                        )
+                        await connection_manager.broadcast(room_id, resume_bc.model_dump(mode="json"))
                 except Exception as e:
                     await connection_manager.send_personal(
                         websocket, ErrorBroadcast(message=str(e), code="SEEK_ERROR").model_dump(mode="json")
                     )
+
+            elif msg_type == MessageType.SEEK_READY:
+                op_id = int(msg.get("operationId", 0))
+                try:
+                    r, should_resume = await room_manager.handle_seek_ready(room_id, participant_id, op_id)
+                    if should_resume:
+                        resume_bc = SeekResumeBroadcast(
+                            operationId=r.seekOperationId,
+                            position=r.position,
+                            isPlaying=r.isPlaying,
+                            serverTime=r.lastStateChangeServerTime
+                        )
+                        await connection_manager.broadcast(room_id, resume_bc.model_dump(mode="json"))
+                except Exception as e:
+                    logger.error(f"Error handling seek ready: {e}")
+
+            elif msg_type == MessageType.MEDIA_LOADED:
+                has_media = bool(msg.get("hasMedia", True))
+                try:
+                    await room_manager.handle_media_loaded(room_id, participant_id, has_media)
+                except Exception as e:
+                    logger.error(f"Error handling media loaded: {e}")
 
             elif msg_type == MessageType.PLAYBACK_RATE:
                 rate_val = msg.get("rate")
@@ -264,3 +312,11 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
                     hostId=new_host, serverTime=room_manager.current_server_time_ms()
                 )
                 await connection_manager.broadcast(room_id, host_bc.model_dump(mode="json"))
+            if not getattr(updated_room, "seekBarrierActive", True) and getattr(updated_room, "seekOperationId", 0) > 0:
+                resume_bc = SeekResumeBroadcast(
+                    operationId=updated_room.seekOperationId,
+                    position=updated_room.position,
+                    isPlaying=updated_room.isPlaying,
+                    serverTime=updated_room.lastStateChangeServerTime
+                )
+                await connection_manager.broadcast(room_id, resume_bc.model_dump(mode="json"))

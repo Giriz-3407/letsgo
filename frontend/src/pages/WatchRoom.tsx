@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { RoomState, ControlMode, SyncStatus } from '../types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { RoomState, ControlMode, SyncStatus, AppMediaSource } from '../types';
 import { ClockSynchronizer } from '../sync/ClockSynchronizer';
 import { WebSocketRoomClient } from '../sync/WebSocketRoomClient';
 import { PlaybackSynchronizer, SyncStats } from '../sync/PlaybackSynchronizer';
@@ -32,6 +32,8 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [mediaSource, setMediaSource] = useState<AppMediaSource | null>(null);
+  const mediaSourceRef = useRef<AppMediaSource | null>(null);
 
   // Stored participant identity
   const currentUserId = useMemo(() => {
@@ -70,6 +72,9 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
     unsubs.push(
       wsClient.on('STATUS_CHANGE', ({ connected }) => {
         setSyncStatus(connected ? 'SYNCED' : 'DISCONNECTED');
+        if (connected && mediaSourceRef.current) {
+          wsClient.sendMediaLoaded(true);
+        }
       })
     );
 
@@ -116,6 +121,70 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
           };
           synchronizer.synchronizeToState(updated);
           return updated;
+        });
+      })
+    );
+
+    unsubs.push(
+      wsClient.on('SEEK_PREPARE', (msg) => {
+        synchronizer.handleSeekPrepare(msg.operationId, msg.position, msg.isPlaying, msg.serverTime);
+        setRoomState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            isPlaying: false,
+            position: msg.position,
+            lastStateChangeServerTime: msg.serverTime,
+            seekOperationId: msg.operationId,
+            seekBarrierActive: true,
+            seekTargetPosition: msg.position,
+            seekReadyParticipants: [],
+          };
+        });
+      })
+    );
+
+    unsubs.push(
+      wsClient.on('SEEK_READY', (msg) => {
+        setRoomState((prev) => {
+          if (!prev || prev.seekOperationId !== msg.operationId) return prev;
+          const currentReady = prev.seekReadyParticipants || [];
+          if (!currentReady.includes(msg.participantId)) {
+            return {
+              ...prev,
+              seekReadyParticipants: [...currentReady, msg.participantId],
+            };
+          }
+          return prev;
+        });
+      })
+    );
+
+    unsubs.push(
+      wsClient.on('SEEK_RESUME', (msg) => {
+        synchronizer.handleSeekResume(msg.operationId, msg.position, msg.isPlaying, msg.serverTime);
+        setRoomState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            isPlaying: msg.isPlaying,
+            position: msg.position,
+            lastStateChangeServerTime: msg.serverTime,
+            seekBarrierActive: false,
+            seekTargetPosition: null,
+          };
+        });
+      })
+    );
+
+    unsubs.push(
+      wsClient.on('MEDIA_LOADED', (msg) => {
+        setRoomState((prev) => {
+          if (!prev) return prev;
+          const newParticipants = prev.participants.map((p) =>
+            p.id === msg.participantId ? { ...p, hasMedia: msg.hasMedia } : p
+          );
+          return { ...prev, participants: newParticipants };
         });
       })
     );
@@ -244,6 +313,14 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
     };
   }, [wsClient, clockSync, synchronizer]);
 
+  // Synchronize mediaSourceRef and send MEDIA_LOADED over WebSocket
+  useEffect(() => {
+    mediaSourceRef.current = mediaSource;
+    if (wsClient.isConnected()) {
+      wsClient.sendMediaLoaded(!!mediaSource);
+    }
+  }, [mediaSource, wsClient]);
+
   const copyRoomLink = () => {
     navigator.clipboard.writeText(window.location.href).then(() => {
       setCopiedLink(true);
@@ -344,9 +421,44 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
             onPlaybackRateChange={(rate) => {
               synchronizer.requestPlaybackRate(rate);
             }}
-            selectedFileName={selectedFile?.name}
-            onFileSelect={(file) => setSelectedFile(file)}
+            mediaSource={mediaSource}
+            onMediaSourceChange={(source) => {
+              setMediaSource(source);
+              if (source?.file) {
+                setSelectedFile(source.file);
+              } else {
+                setSelectedFile(null);
+              }
+            }}
+            selectedFileName={mediaSource?.title || selectedFile?.name}
+            onFileSelect={(file) => {
+              setSelectedFile(file);
+              if (file) {
+                setMediaSource({
+                  type: 'local',
+                  title: file.name,
+                  src: URL.createObjectURL(file),
+                  file,
+                  size: file.size,
+                });
+              } else {
+                setMediaSource(null);
+              }
+            }}
           />
+
+          {roomState?.seekBarrierActive && (
+            <div className="mt-3 px-4 py-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center justify-between text-xs text-amber-200 animate-pulse">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                <span className="font-medium">Synchronizing seek across room...</span>
+              </div>
+              <span className="font-mono text-[11px] text-amber-300">
+                {roomState.seekReadyParticipants?.length || 0} /{' '}
+                {connectedParticipants.filter((p) => p.hasMedia).length || connectedParticipants.length} ready
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Clean Room Information Row Directly Below Video */}
@@ -355,12 +467,26 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
           <div className="space-y-1.5 min-w-0 pr-4">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-medium text-neutral-100 truncate">
-                {selectedFile ? selectedFile.name : (roomState?.video ? roomState.video.name : 'No video selected')}
+                {mediaSource?.title || selectedFile?.name || (roomState?.video ? roomState.video.name : 'No video selected')}
               </h2>
             </div>
 
             <div className="flex items-center gap-2 text-xs text-neutral-500">
-              {selectedFile ? (
+              {mediaSource ? (
+                <>
+                  {mediaSource.size ? (
+                    <>
+                      <span>{(mediaSource.size / (1024 * 1024)).toFixed(1)} MB</span>
+                      <span>&bull;</span>
+                    </>
+                  ) : null}
+                  <span className={`uppercase tracking-wider text-[10px] font-mono ${
+                    mediaSource.type === 'r2' ? 'text-sky-400' : 'text-emerald-400'
+                  }`}>
+                    {mediaSource.type === 'r2' ? 'Cloudflare R2' : 'Local Playback'}
+                  </span>
+                </>
+              ) : selectedFile ? (
                 <>
                   <span>{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
                   <span>&bull;</span>
@@ -370,7 +496,7 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
                 </>
               ) : (
                 <span className="text-[11px] text-neutral-500">
-                  Select your local copy of the movie to begin watching in sync
+                  Select a local video file or Cloudflare R2 video to begin watching in sync
                 </span>
               )}
             </div>

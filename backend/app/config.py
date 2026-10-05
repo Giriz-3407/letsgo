@@ -15,8 +15,14 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
     
     # Storage
-    STORAGE_PROVIDER: str = "local"  # "local", "google_drive", "s3"
+    STORAGE_PROVIDER: str = "local"  # "local", "google_drive", "s3", "r2"
     MEDIA_DIR: Path = BASE_DIR / "sample_media"
+    
+    # Cloudflare R2
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = "letsgo-backend"
     
     # Google OAuth & Picker
     GOOGLE_CLIENT_ID: str = ""
@@ -33,6 +39,12 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    @property
+    def r2_endpoint_url(self) -> str:
+        if self.R2_ACCOUNT_ID:
+            return f"https://{self.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        return ""
 
     def get_allowed_origins(self) -> List[str]:
         origins = [

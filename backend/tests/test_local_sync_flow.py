@@ -73,37 +73,82 @@ async def test_local_media_room_lifecycle_and_synchronization():
             assert pause_bob["type"] == "PAUSE"
             assert pause_bob["position"] == 15.0
 
-            # E. Host manually seeks far forward to 500.0s
+            # E. Host manually seeks far forward to 500.0s (triggers SEEK_PREPARE barrier)
             ws_alice.send_json({"type": "SEEK", "position": 500.0})
-            seek_alice = ws_alice.receive_json()
-            seek_bob = ws_bob.receive_json()
-            assert seek_alice["type"] == "SEEK"
-            assert seek_alice["position"] == 500.0
-            assert seek_bob["type"] == "SEEK"
-            assert seek_bob["position"] == 500.0
+            prep_alice = ws_alice.receive_json()
+            prep_bob = ws_bob.receive_json()
+            assert prep_alice["type"] == "SEEK_PREPARE"
+            assert prep_alice["position"] == 500.0
+            assert prep_bob["type"] == "SEEK_PREPARE"
+            assert prep_bob["position"] == 500.0
+            op_e = prep_alice["operationId"]
+
+            # Both clients report readiness for operation
+            ws_alice.send_json({"type": "SEEK_READY", "operationId": op_e})
+            ws_bob.send_json({"type": "SEEK_READY", "operationId": op_e})
+            res_alice = ws_alice.receive_json()
+            res_bob = ws_bob.receive_json()
+            assert res_alice["type"] == "SEEK_RESUME"
+            assert res_alice["position"] == 500.0
+            assert res_bob["type"] == "SEEK_RESUME"
+            assert res_bob["position"] == 500.0
 
             # F. Host manually seeks far backward to 45.0s
             ws_alice.send_json({"type": "SEEK", "position": 45.0})
-            seek_back_alice = ws_alice.receive_json()
-            seek_back_bob = ws_bob.receive_json()
-            assert seek_back_alice["type"] == "SEEK"
-            assert seek_back_alice["position"] == 45.0
-            assert seek_back_bob["type"] == "SEEK"
-            assert seek_back_bob["position"] == 45.0
+            prep_back_alice = ws_alice.receive_json()
+            prep_back_bob = ws_bob.receive_json()
+            assert prep_back_alice["type"] == "SEEK_PREPARE"
+            assert prep_back_alice["position"] == 45.0
+            assert prep_back_bob["type"] == "SEEK_PREPARE"
+            assert prep_back_bob["position"] == 45.0
+            op_f = prep_back_alice["operationId"]
+
+            ws_alice.send_json({"type": "SEEK_READY", "operationId": op_f})
+            ws_bob.send_json({"type": "SEEK_READY", "operationId": op_f})
+            res_back_alice = ws_alice.receive_json()
+            res_back_bob = ws_bob.receive_json()
+            assert res_back_alice["type"] == "SEEK_RESUME"
+            assert res_back_alice["position"] == 45.0
+            assert res_back_bob["type"] == "SEEK_RESUME"
+            assert res_back_bob["position"] == 45.0
 
             # G. Host presses +10 (45 + 10 = 55)
             ws_alice.send_json({"type": "SEEK", "position": 55.0})
-            skip_fwd_alice = ws_alice.receive_json()
-            skip_fwd_bob = ws_bob.receive_json()
-            assert skip_fwd_alice["position"] == 55.0
-            assert skip_fwd_bob["position"] == 55.0
+            prep_fwd_alice = ws_alice.receive_json()
+            prep_fwd_bob = ws_bob.receive_json()
+            assert prep_fwd_alice["type"] == "SEEK_PREPARE"
+            assert prep_fwd_alice["position"] == 55.0
+            assert prep_fwd_bob["type"] == "SEEK_PREPARE"
+            assert prep_fwd_bob["position"] == 55.0
+            op_g = prep_fwd_alice["operationId"]
+
+            ws_alice.send_json({"type": "SEEK_READY", "operationId": op_g})
+            ws_bob.send_json({"type": "SEEK_READY", "operationId": op_g})
+            res_fwd_alice = ws_alice.receive_json()
+            res_fwd_bob = ws_bob.receive_json()
+            assert res_fwd_alice["type"] == "SEEK_RESUME"
+            assert res_fwd_alice["position"] == 55.0
+            assert res_fwd_bob["type"] == "SEEK_RESUME"
+            assert res_fwd_bob["position"] == 55.0
 
             # H. Host presses -10 (55 - 10 = 45)
             ws_alice.send_json({"type": "SEEK", "position": 45.0})
-            skip_back_alice = ws_alice.receive_json()
-            skip_back_bob = ws_bob.receive_json()
-            assert skip_back_alice["position"] == 45.0
-            assert skip_back_bob["position"] == 45.0
+            prep_rew_alice = ws_alice.receive_json()
+            prep_rew_bob = ws_bob.receive_json()
+            assert prep_rew_alice["type"] == "SEEK_PREPARE"
+            assert prep_rew_alice["position"] == 45.0
+            assert prep_rew_bob["type"] == "SEEK_PREPARE"
+            assert prep_rew_bob["position"] == 45.0
+            op_h = prep_rew_alice["operationId"]
+
+            ws_alice.send_json({"type": "SEEK_READY", "operationId": op_h})
+            ws_bob.send_json({"type": "SEEK_READY", "operationId": op_h})
+            res_rew_alice = ws_alice.receive_json()
+            res_rew_bob = ws_bob.receive_json()
+            assert res_rew_alice["type"] == "SEEK_RESUME"
+            assert res_rew_alice["position"] == 45.0
+            assert res_rew_bob["type"] == "SEEK_RESUME"
+            assert res_rew_bob["position"] == 45.0
 
             # I. Host changes playback speed to 1.5x
             ws_alice.send_json({"type": "PLAYBACK_RATE", "rate": 1.5})

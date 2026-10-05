@@ -1,5 +1,5 @@
 import time
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Set
 from fastapi import HTTPException
 
 from .repository import RoomRepository, room_repository
@@ -15,7 +15,8 @@ class RoomManager:
 
     def calculate_current_position(self, room: RoomState, server_time_ms: Optional[float] = None) -> float:
         now_ms = server_time_ms if server_time_ms is not None else self.current_server_time_ms()
-        if not room.isPlaying:
+        # Authoritative playback projection remains frozen while paused or during an active seek barrier
+        if not room.isPlaying or getattr(room, "seekBarrierActive", False):
             return round(room.position, 3)
 
         elapsed_seconds = (now_ms - room.lastStateChangeServerTime) / 1000.0
@@ -157,6 +158,10 @@ class RoomManager:
             room.position = self.calculate_current_position(room, now_ms)
             room.lastStateChangeServerTime = now_ms
 
+        # If a seek barrier was waiting for this participant, check if remaining participants are all ready
+        if room.seekBarrierActive:
+            self.check_and_resolve_seek_barrier(room)
+
         await self.repo.save_room(room)
         return room, new_host_id
 
@@ -174,6 +179,7 @@ class RoomManager:
         room.isPlaying = True
         room.position = max(0.0, position)
         room.lastStateChangeServerTime = now_ms
+        room.seekBarrierActive = False
 
         await self.repo.save_room(room)
         return room, now_ms
@@ -197,9 +203,29 @@ class RoomManager:
         room.isPlaying = False
         room.position = actual_pos
         room.lastStateChangeServerTime = now_ms
+        room.seekBarrierActive = False
 
         await self.repo.save_room(room)
         return room, now_ms
+
+    def get_required_participant_ids(self, room: RoomState) -> Set[str]:
+        media_pids = {p.id for p in room.participants if p.connected and getattr(p, "hasMedia", False)}
+        if media_pids:
+            return media_pids
+        return {p.id for p in room.participants if p.connected}
+
+    def check_and_resolve_seek_barrier(self, room: RoomState) -> bool:
+        if not getattr(room, "seekBarrierActive", False):
+            return False
+        required = self.get_required_participant_ids(room)
+        ready_set = set(room.seekReadyParticipants)
+        if required and required.issubset(ready_set):
+            now_ms = self.current_server_time_ms()
+            room.seekBarrierActive = False
+            room.position = room.seekTargetPosition if room.seekTargetPosition is not None else room.position
+            room.lastStateChangeServerTime = now_ms
+            return True
+        return False
 
     async def handle_seek(
         self, room_id: str, participant_id: str, position: float
@@ -212,11 +238,56 @@ class RoomManager:
             raise HTTPException(status_code=403, detail="Permission denied: only host can control playback")
 
         now_ms = self.current_server_time_ms()
-        room.position = max(0.0, position)
+        target_pos = max(0.0, position)
+
+        room.seekOperationId += 1
+        room.seekBarrierActive = True
+        room.seekTargetPosition = target_pos
+        room.position = target_pos
         room.lastStateChangeServerTime = now_ms
+        room.seekReadyParticipants = []
+
+        required = self.get_required_participant_ids(room)
+        if not required:
+            room.seekBarrierActive = False
 
         await self.repo.save_room(room)
         return room, now_ms
+
+    async def handle_seek_ready(
+        self, room_id: str, participant_id: str, operation_id: int
+    ) -> Tuple[RoomState, bool]:
+        """
+        Records participant readiness for the given seekOperationId.
+        Returns (room, should_broadcast_resume).
+        """
+        room = await self.repo.get_room(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+
+        # Stale operation ID or no barrier active -> ignore
+        if not getattr(room, "seekBarrierActive", False) or operation_id != room.seekOperationId:
+            return room, False
+
+        if participant_id not in room.seekReadyParticipants:
+            room.seekReadyParticipants.append(participant_id)
+
+        resolved = self.check_and_resolve_seek_barrier(room)
+        await self.repo.save_room(room)
+        return room, resolved
+
+    async def handle_media_loaded(
+        self, room_id: str, participant_id: str, has_media: bool = True
+    ) -> RoomState:
+        room = await self.repo.get_room(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+
+        participant = next((p for p in room.participants if p.id == participant_id), None)
+        if participant:
+            participant.hasMedia = has_media
+            await self.repo.save_room(room)
+        return room
 
     async def handle_playback_rate(
         self, room_id: str, participant_id: str, rate: float

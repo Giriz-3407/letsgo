@@ -39,6 +39,12 @@ export class PlaybackSynchronizer {
   private userPlaybackRate: number = 1.0;
   private driftCorrectionFactor: number = 1.0;
 
+  // Room-wide seek barrier state
+  private currentSeekOperationId: number = 0;
+  private isSeekBarrierActive: boolean = false;
+  private seekTargetPosition: number | null = null;
+  private hasReportedReadyForOp: number | null = null;
+
   constructor(wsClient: WebSocketRoomClient, clockSync: ClockSynchronizer) {
     this.wsClient = wsClient;
     this.clockSync = clockSync;
@@ -119,6 +125,7 @@ export class PlaybackSynchronizer {
       this.currentRoomState = {
         ...this.currentRoomState,
         position: targetPosition,
+        lastStateChangeServerTime: this.clockSync.getEstimatedServerTime(),
       };
     }
   }
@@ -127,6 +134,14 @@ export class PlaybackSynchronizer {
     this.currentRoomState = state;
     if (state.playbackRate !== undefined && state.playbackRate !== null) {
       this.userPlaybackRate = state.playbackRate;
+    }
+    if (state.seekBarrierActive) {
+      this.isSeekBarrierActive = true;
+      this.currentSeekOperationId = state.seekOperationId || this.currentSeekOperationId;
+      this.seekTargetPosition = state.seekTargetPosition ?? null;
+    } else if (this.isSeekBarrierActive && state.seekBarrierActive === false) {
+      this.isSeekBarrierActive = false;
+      this.seekTargetPosition = null;
     }
     this.driftCorrectionFactor = 1.0;
     this.applyEffectivePlaybackRate();
@@ -145,11 +160,22 @@ export class PlaybackSynchronizer {
     this.changeSource = source;
   }
 
+  public isSeekBarrierInProgress(): boolean {
+    return this.isSeekBarrierActive;
+  }
+
+  public getCurrentSeekOperationId(): number {
+    return this.currentSeekOperationId;
+  }
+
   /**
    * Calculates the authoritative room playback position at the current estimated server time.
    */
   public calculateAuthoritativePosition(): number {
     if (!this.currentRoomState) return 0;
+    if (this.isSeekBarrierActive && this.seekTargetPosition !== null) {
+      return this.seekTargetPosition;
+    }
     if (!this.currentRoomState.isPlaying) {
       return this.currentRoomState.position;
     }
@@ -225,6 +251,26 @@ export class PlaybackSynchronizer {
     if (state.playbackRate !== undefined && state.playbackRate !== null) {
       this.userPlaybackRate = state.playbackRate;
     }
+
+    if (state.seekBarrierActive) {
+      this.isSeekBarrierActive = true;
+      this.currentSeekOperationId = state.seekOperationId || this.currentSeekOperationId;
+      this.seekTargetPosition = state.seekTargetPosition ?? null;
+      if (this.video && !this.video.paused) {
+        this.executeProgrammaticPause();
+      }
+      if (state.seekTargetPosition !== undefined && state.seekTargetPosition !== null && this.video) {
+        if (Math.abs(this.video.currentTime - state.seekTargetPosition) > 0.15) {
+          this.executeProgrammaticSeek(state.seekTargetPosition, PlaybackChangeSource.REMOTE);
+        }
+      }
+      if (state.seekOperationId) {
+        this.checkAndReportSeekReady(state.seekOperationId);
+      }
+      this.publishStats();
+      return;
+    }
+
     const targetPosition = this.calculateAuthoritativePosition();
     const drift = Math.abs(targetPosition - this.video.currentTime);
 
@@ -244,6 +290,96 @@ export class PlaybackSynchronizer {
       if (!this.video.paused) {
         this.executeProgrammaticPause();
       }
+    }
+  }
+
+  public handleSeekPrepare(operationId: number, targetPosition: number, isPlaying: boolean, serverTime: number): void {
+    if (operationId < this.currentSeekOperationId) {
+      return;
+    }
+
+    this.currentSeekOperationId = operationId;
+    this.isSeekBarrierActive = true;
+    this.seekTargetPosition = targetPosition;
+    this.hasReportedReadyForOp = null;
+
+    if (this.currentRoomState) {
+      this.currentRoomState = {
+        ...this.currentRoomState,
+        position: targetPosition,
+        isPlaying: false,
+        lastStateChangeServerTime: serverTime,
+        seekOperationId: operationId,
+        seekBarrierActive: true,
+        seekTargetPosition: targetPosition,
+      };
+    }
+
+    if (this.video && !this.video.paused) {
+      this.executeProgrammaticPause();
+    }
+
+    if (this.video) {
+      this.executeProgrammaticSeek(targetPosition, PlaybackChangeSource.REMOTE);
+    }
+
+    this.checkAndReportSeekReady(operationId);
+    this.publishStats();
+  }
+
+  public handleSeekResume(operationId: number, position: number, isPlaying: boolean, serverTime: number): void {
+    if (operationId < this.currentSeekOperationId) {
+      return;
+    }
+
+    this.isSeekBarrierActive = false;
+    this.seekTargetPosition = null;
+
+    if (this.currentRoomState) {
+      this.currentRoomState = {
+        ...this.currentRoomState,
+        position,
+        isPlaying,
+        lastStateChangeServerTime: serverTime,
+        seekBarrierActive: false,
+        seekTargetPosition: null,
+      };
+    }
+
+    this.driftCorrectionFactor = 1.0;
+    this.applyEffectivePlaybackRate();
+    this.lastSeekTime = Date.now();
+
+    if (this.video && Math.abs(this.video.currentTime - position) > 0.15) {
+      this.executeProgrammaticSeek(position, PlaybackChangeSource.REMOTE);
+    }
+
+    if (isPlaying) {
+      if (this.video && this.video.paused) {
+        this.executeProgrammaticPlay();
+      }
+    } else {
+      if (this.video && !this.video.paused) {
+        this.executeProgrammaticPause();
+      }
+    }
+
+    this.publishStats();
+  }
+
+  public checkAndReportSeekReady(opId: number): void {
+    if (!this.isSeekBarrierActive || this.currentSeekOperationId !== opId) return;
+    if (this.hasReportedReadyForOp === opId) return;
+
+    if (!this.video) {
+      this.hasReportedReadyForOp = opId;
+      this.wsClient.sendSeekReady(opId);
+      return;
+    }
+
+    if (!this.video.seeking && this.video.readyState >= 2) {
+      this.hasReportedReadyForOp = opId;
+      this.wsClient.sendSeekReady(opId);
     }
   }
 
@@ -267,8 +403,8 @@ export class PlaybackSynchronizer {
   public checkAndCorrectDrift(): void {
     if (!this.video || !this.currentRoomState) return;
 
-    // Suppress drift correction while any seek is in progress
-    if (this.isUserSeeking || this.programmaticSeekCount > 0) {
+    // Suppress drift correction while seek barrier is active or any seek is in progress
+    if (this.isSeekBarrierActive || this.isUserSeeking || this.programmaticSeekCount > 0) {
       return;
     }
 
@@ -374,6 +510,9 @@ export class PlaybackSynchronizer {
       } else if (this.changeSource === PlaybackChangeSource.USER && this.video) {
         this.wsClient.sendSeek(this.video.currentTime);
       }
+      if (this.isSeekBarrierActive) {
+        this.checkAndReportSeekReady(this.currentSeekOperationId);
+      }
       this.publishStats();
     });
 
@@ -397,14 +536,18 @@ export class PlaybackSynchronizer {
         this.isBuffering = false;
         this.wsClient.sendBuffering(false, this.video?.currentTime);
       }
-      if (this.currentRoomState?.isPlaying && this.video?.paused) {
+      if (this.isSeekBarrierActive) {
+        this.checkAndReportSeekReady(this.currentSeekOperationId);
+      } else if (this.currentRoomState?.isPlaying && this.video?.paused) {
         this.executeProgrammaticPlay();
       }
       this.publishStats();
     });
 
     this.video.addEventListener('loadeddata', () => {
-      if (this.currentRoomState?.isPlaying && this.video?.paused) {
+      if (this.isSeekBarrierActive) {
+        this.checkAndReportSeekReady(this.currentSeekOperationId);
+      } else if (this.currentRoomState?.isPlaying && this.video?.paused) {
         this.executeProgrammaticPlay();
       }
       this.publishStats();
@@ -442,6 +585,7 @@ export class PlaybackSynchronizer {
 
   public getSyncStatus(): SyncStatus {
     if (!this.wsClient.isConnected()) return 'DISCONNECTED';
+    if (this.isSeekBarrierActive) return 'WAITING_FOR_OTHERS';
     if (this.isBuffering) return 'BUFFERING';
     if (!this.currentRoomState) return 'SYNCHRONIZING';
 
