@@ -3,6 +3,8 @@ import { Home } from './pages/Home';
 import { CreateRoom } from './pages/CreateRoom';
 import { JoinRoom } from './pages/JoinRoom';
 import { WatchRoom } from './pages/WatchRoom';
+import { UploadProvider } from './context/UploadContext';
+import { PersistentUploadOverlay } from './components/PersistentUploadOverlay';
 
 export const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<string>('home');
@@ -55,19 +57,25 @@ export const App: React.FC = () => {
     }
   };
 
-  if (currentPage === 'room' && currentRoomId) {
-    return <WatchRoom roomId={currentRoomId} onNavigate={navigate} />;
-  }
+  const renderPage = () => {
+    if (currentPage === 'room' && currentRoomId) {
+      return <WatchRoom roomId={currentRoomId} onNavigate={navigate} />;
+    }
+    if (currentPage === 'create') {
+      return <CreateRoom onNavigate={navigate} />;
+    }
+    if (currentPage === 'join') {
+      return <JoinRoom onNavigate={navigate} />;
+    }
+    return <Home onNavigate={navigate} />;
+  };
 
-  if (currentPage === 'create') {
-    return <CreateRoom onNavigate={navigate} />;
-  }
-
-  if (currentPage === 'join') {
-    return <JoinRoom onNavigate={navigate} />;
-  }
-
-  return <Home onNavigate={navigate} />;
+  return (
+    <UploadProvider>
+      {renderPage()}
+      <PersistentUploadOverlay />
+    </UploadProvider>
+  );
 };
 
 export default App;

@@ -1,4 +1,4 @@
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Polyfill window for Node environment
@@ -150,6 +150,10 @@ describe('WatchTogether Local-File Playback & Synchronization Test Suite', () =>
     clockSync = new ClockSynchronizer();
     synchronizer = new PlaybackSynchronizer(wsClient as any, clockSync);
     mockVideo = new MockVideoElement();
+  });
+
+  afterEach(() => {
+    synchronizer.detachVideo();
   });
 
   test('A: One user selects a local MP4 and plays it', async () => {

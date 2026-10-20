@@ -71,3 +71,91 @@ export interface InboundMessage {
   type: string;
   [key: string]: any;
 }
+
+export interface R2AdminAuthResponse {
+  token: string;
+  expiresIn: number;
+}
+
+export interface R2InitiateUploadResponse {
+  uploadId: string;
+  objectKey: string;
+  partSize: number;
+  totalParts: number;
+  filename: string;
+  fileSize: number;
+  bucket: string;
+  contentType: string;
+}
+
+export interface R2PartUrlItem {
+  partNumber: number;
+  url: string;
+  expiresIn: number;
+}
+
+export interface R2PartETag {
+  partNumber: number;
+  etag: string;
+}
+
+export interface R2CompleteUploadResponse {
+  status: string;
+  objectKey: string;
+  uploadId: string;
+  location?: string;
+}
+
+export type UploadStatus =
+  | 'idle'
+  | 'authorizing'
+  | 'initiating'
+  | 'uploading'
+  | 'completing'
+  | 'completed'
+  | 'error'
+  | 'aborted'
+  | 'paused';
+
+export interface UploadProgress {
+  uploadedBytes: number;
+  totalBytes: number;
+  percentage: number;
+  speedBytesPerSec: number;
+  currentPart: number;
+  totalParts: number;
+}
+
+export interface UploadTask {
+  id: string;
+  uploadId?: string;
+  objectKey?: string;
+  file: File;
+  filename: string;
+  fileSize: number;
+  partSize?: number;
+  totalParts?: number;
+  status: UploadStatus;
+  progress: UploadProgress;
+  error?: string | null;
+  createdAt: number;
+}
+
+export interface PersistedUploadPart {
+  partNumber: number;
+  etag: string;
+  size: number;
+}
+
+export interface PersistedUploadMetadata {
+  uploadId: string;
+  objectKey: string;
+  filename: string;
+  fileSize: number;
+  partSize: number;
+  totalParts: number;
+  completedParts: PersistedUploadPart[];
+  status: 'uploading' | 'completed' | 'aborted' | 'paused';
+  createdAt: number;
+  updatedAt: number;
+}

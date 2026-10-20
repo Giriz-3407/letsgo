@@ -388,9 +388,13 @@ export class PlaybackSynchronizer {
    */
   private startPeriodicDriftCheck(): void {
     this.stopPeriodicDriftCheck();
-    this.checkInterval = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       this.checkAndCorrectDrift();
     }, 1500);
+    if (typeof (timer as any)?.unref === 'function') {
+      (timer as any).unref();
+    }
+    this.checkInterval = timer as any;
   }
 
   private stopPeriodicDriftCheck(): void {

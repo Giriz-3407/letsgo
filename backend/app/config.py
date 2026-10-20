@@ -8,6 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     APP_NAME: str = "WatchTogether API"
     DEBUG: bool = False
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
     # Server & Ports
     HOST: str = "0.0.0.0"
@@ -23,6 +24,9 @@ class Settings(BaseSettings):
     R2_ACCESS_KEY_ID: str = ""
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = "letsgo-backend"
+    R2_ADMIN_PASSWORD: str = os.getenv("R2_ADMIN_PASSWORD", "admin123")
+    R2_ADMIN_TOKEN_SECRET: str = ""
+    R2_UPLOAD_EXPIRY_SECONDS: int = 86400  # 24 hours
     
     # Google OAuth & Picker
     GOOGLE_CLIENT_ID: str = ""
@@ -39,6 +43,14 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    def is_production(self) -> bool:
+        env_lower = self.ENVIRONMENT.lower()
+        if env_lower in ("production", "prod"):
+            return True
+        if not self.DEBUG and (os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID")):
+            return True
+        return False
 
     @property
     def r2_endpoint_url(self) -> str:

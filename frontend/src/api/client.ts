@@ -1,4 +1,14 @@
-import { RoomState, VideoMetadata, ControlMode, R2VideoItem } from '../types';
+import {
+  RoomState,
+  VideoMetadata,
+  ControlMode,
+  R2VideoItem,
+  R2AdminAuthResponse,
+  R2InitiateUploadResponse,
+  R2PartUrlItem,
+  R2PartETag,
+  R2CompleteUploadResponse
+} from '../types';
 import { API_BASE_URL } from '../config';
 
 export interface CreateRoomParams {
@@ -29,13 +39,45 @@ export interface GooglePickerConfig {
 }
 
 class ApiClient {
+  private r2AdminToken: string | null = null;
+
+  constructor() {
+    if (typeof localStorage !== 'undefined') {
+      this.r2AdminToken = localStorage.getItem('wt_r2_admin_token');
+    }
+  }
+
+  public setR2AdminToken(token: string | null): void {
+    this.r2AdminToken = token;
+    if (typeof localStorage !== 'undefined') {
+      if (token) {
+        localStorage.setItem('wt_r2_admin_token', token);
+      } else {
+        localStorage.removeItem('wt_r2_admin_token');
+      }
+    }
+  }
+
+  public getR2AdminToken(): string | null {
+    if (!this.r2AdminToken && typeof localStorage !== 'undefined') {
+      this.r2AdminToken = localStorage.getItem('wt_r2_admin_token');
+    }
+    return this.r2AdminToken;
+  }
+
   private getHeaders(): HeadersInit {
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    const savedSession = localStorage.getItem('wt_session_id');
-    if (savedSession) {
-      headers['X-Session-ID'] = savedSession;
+    if (typeof localStorage !== 'undefined') {
+      const savedSession = localStorage.getItem('wt_session_id');
+      if (savedSession) {
+        headers['X-Session-ID'] = savedSession;
+      }
+    }
+    const adminToken = this.getR2AdminToken();
+    if (adminToken) {
+      headers['X-R2-Admin-Token'] = adminToken;
     }
     return headers;
   }
@@ -231,6 +273,100 @@ class ApiClient {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Failed to obtain R2 playback URL');
+    }
+    return res.json();
+  }
+
+  public async verifyR2Admin(password: string): Promise<R2AdminAuthResponse> {
+    const res = await fetch(this.buildUrl('/api/videos/r2/admin/verify'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Admin authentication failed');
+    }
+    const data: R2AdminAuthResponse = await res.json();
+    this.setR2AdminToken(data.token);
+    return data;
+  }
+
+  public async initiateR2Upload(
+    filename: string,
+    fileSize: number,
+    contentType?: string
+  ): Promise<R2InitiateUploadResponse> {
+    const res = await fetch(this.buildUrl('/api/videos/r2/uploads/initiate'), {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ filename, fileSize, contentType }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to initiate R2 multipart upload');
+    }
+    return res.json();
+  }
+
+  public async getR2PartUrls(
+    uploadId: string,
+    objectKey: string,
+    partNumbers: number[]
+  ): Promise<R2PartUrlItem[]> {
+    const res = await fetch(this.buildUrl(`/api/videos/r2/uploads/${encodeURIComponent(uploadId)}/part-urls`), {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ objectKey, partNumbers }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to generate presigned part URLs');
+    }
+    return res.json();
+  }
+
+  public async completeR2Upload(
+    uploadId: string,
+    objectKey: string,
+    parts: R2PartETag[]
+  ): Promise<R2CompleteUploadResponse> {
+    const res = await fetch(this.buildUrl(`/api/videos/r2/uploads/${encodeURIComponent(uploadId)}/complete`), {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ objectKey, parts }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to complete R2 upload');
+    }
+    return res.json();
+  }
+
+  public async abortR2Upload(
+    uploadId: string,
+    objectKey?: string
+  ): Promise<{ status: string; uploadId: string }> {
+    const res = await fetch(this.buildUrl(`/api/videos/r2/uploads/${encodeURIComponent(uploadId)}/abort`), {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ objectKey }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to abort multipart upload');
+    }
+    return res.json();
+  }
+
+  public async deleteR2Video(objectKey: string): Promise<{ status: string; key: string; message: string }> {
+    const res = await fetch(this.buildUrl(`/api/videos/r2/${encodeURIComponent(objectKey)}`), {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to delete video from R2');
     }
     return res.json();
   }

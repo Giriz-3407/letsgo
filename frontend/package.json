@@ -8,7 +8,7 @@
     "build": "vite build",
     "postinstall": "chmod +x node_modules/.bin/* || true",
     "typecheck": "tsc --noEmit",
-    "test": "npx tsx --test src/sync/__tests__/synchronizer.test.ts",
+    "test": "npx tsx --test src/sync/__tests__/synchronizer.test.ts src/sync/__tests__/r2_upload.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

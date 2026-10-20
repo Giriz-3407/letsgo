@@ -2,6 +2,8 @@ import React, { useRef, useState, useEffect } from 'react';
 import { PlaybackChangeSource, AppMediaSource, R2VideoItem } from '../types';
 import { PlaybackSynchronizer } from '../sync/PlaybackSynchronizer';
 import { api } from '../api/client';
+import { useUploadContext } from '../context/UploadContext';
+import { R2VideoManagerModal } from './R2VideoManagerModal';
 import {
   Play,
   Pause,
@@ -114,13 +116,8 @@ export const VideoPlayer: React.FC<Props> = ({
   const [internalFileName, setInternalFileName] = useState<string | null>(null);
   const objectUrlRef = useRef<string | null>(null);
 
-  // R2 state
-  const [isR2ModalOpen, setIsR2ModalOpen] = useState(false);
-  const [r2Videos, setR2Videos] = useState<R2VideoItem[]>([]);
-  const [isLoadingR2, setIsLoadingR2] = useState(false);
-  const [r2Error, setR2Error] = useState<string | null>(null);
-  const [r2SearchQuery, setR2SearchQuery] = useState('');
-  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  // Global R2 upload and manager state
+  const { isR2ModalOpen, openR2Modal, closeR2Modal } = useUploadContext();
 
   const activeSrc = mediaSource?.src ?? (videoSrc !== undefined ? videoSrc : internalObjectUrl);
   const activeFileName = mediaSource?.title ?? (selectedFileName !== undefined ? selectedFileName : internalFileName);
@@ -462,173 +459,34 @@ export const VideoPlayer: React.FC<Props> = ({
     e.target.value = '';
   };
 
-  const openR2Modal = async () => {
-    setIsR2ModalOpen(true);
-    setIsLoadingR2(true);
-    setR2Error(null);
-    try {
-      const items = await api.listR2Videos();
-      setR2Videos(items);
-    } catch (err: any) {
-      setR2Error(err.message || 'Failed to list videos from Cloudflare R2');
-    } finally {
-      setIsLoadingR2(false);
+  const handleSelectR2Source = (source: AppMediaSource) => {
+    // Revoke previous local object URL if any
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
     }
-  };
 
-  const handleSelectR2Video = async (item: R2VideoItem) => {
-    setLoadingKey(item.key);
-    setR2Error(null);
-    try {
-      const res = await api.getR2PlayUrl(item.key);
-      const url = res.url;
-
-      // Revoke previous local object URL if any
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-
-      // Stop and reset previous video element
-      if (videoRef.current) {
-        videoRef.current.pause();
-        videoRef.current.removeAttribute('src');
-        videoRef.current.load();
-      }
-
-      setInternalObjectUrl(url);
-      setInternalFileName(item.name);
-
-      const source: AppMediaSource = {
-        type: 'r2',
-        title: item.name,
-        src: url,
-        r2Key: item.key,
-        size: item.size,
-      };
-
-      onMediaSourceChange?.(source);
-      setIsR2ModalOpen(false);
-    } catch (err: any) {
-      setR2Error(err.message || 'Failed to generate playback URL');
-    } finally {
-      setLoadingKey(null);
+    // Stop and reset previous video element
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
     }
+
+    setInternalObjectUrl(source.src);
+    setInternalFileName(source.title);
+
+    onMediaSourceChange?.(source);
+    closeR2Modal();
   };
 
-  const renderR2Modal = () => {
-    if (!isR2ModalOpen) return null;
-
-    const filtered = r2Videos.filter((v) =>
-      v.name.toLowerCase().includes(r2SearchQuery.toLowerCase()) ||
-      v.key.toLowerCase().includes(r2SearchQuery.toLowerCase())
-    );
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-        <div className="bg-[#111114] border border-white/[0.12] rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh] overflow-hidden text-left">
-          {/* Modal Header */}
-          <div className="p-4 sm:p-5 border-b border-white/[0.08] flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
-                <Cloud className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-neutral-100">Cloudflare R2 Media</h3>
-                <p className="text-[11px] text-neutral-400">Select an online video to stream directly</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setIsR2ModalOpen(false)}
-              className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-white/[0.06] transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Search Bar */}
-          <div className="p-3 sm:px-5 sm:py-3 border-b border-white/[0.06] bg-white/[0.02]">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search videos in bucket..."
-                value={r2SearchQuery}
-                onChange={(e) => setR2SearchQuery(e.target.value)}
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-8 pr-3 py-1.5 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-sky-500/50"
-              />
-            </div>
-          </div>
-
-          {/* Modal Body */}
-          <div className="p-3 sm:p-5 overflow-y-auto flex-1 space-y-2">
-            {isLoadingR2 ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <Loader2 className="w-6 h-6 animate-spin text-sky-400" />
-                <span className="text-xs text-neutral-400">Loading videos from R2...</span>
-              </div>
-            ) : r2Error ? (
-              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-300 text-xs flex flex-col items-center gap-2 text-center">
-                <AlertCircle className="w-5 h-5 text-red-400" />
-                <span>{r2Error}</span>
-                <button
-                  onClick={openR2Modal}
-                  className="mt-2 px-3 py-1 bg-red-500/20 hover:bg-red-500/30 rounded text-[11px] font-medium text-red-200 transition-colors"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : filtered.length === 0 ? (
-              <div className="text-center py-12 text-xs text-neutral-500">
-                {r2SearchQuery ? 'No matching videos found.' : 'No video objects found in R2 bucket.'}
-              </div>
-            ) : (
-              filtered.map((item) => (
-                <button
-                  key={item.key}
-                  onClick={() => handleSelectR2Video(item)}
-                  disabled={loadingKey === item.key}
-                  className="w-full p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.06] hover:border-white/[0.12] transition-colors flex items-center justify-between text-left group disabled:opacity-50"
-                >
-                  <div className="flex items-center gap-3 min-w-0 pr-2">
-                    <div className="w-7 h-7 rounded-lg bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:text-white transition-colors flex-shrink-0">
-                      <Film className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium text-neutral-200 truncate group-hover:text-white">
-                        {item.name}
-                      </div>
-                      <div className="text-[10px] text-neutral-500 font-mono mt-0.5">
-                        {(item.size / (1024 * 1024)).toFixed(1)} MB &bull; {item.mimeType}
-                      </div>
-                    </div>
-                  </div>
-                  {loadingKey === item.key ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-sky-400 flex-shrink-0" />
-                  ) : (
-                    <span className="text-[11px] font-medium text-sky-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                      Select &rarr;
-                    </span>
-                  )}
-                </button>
-              ))
-            )}
-          </div>
-
-          {/* Modal Footer */}
-          <div className="p-3 sm:px-5 border-t border-white/[0.08] bg-white/[0.02] flex justify-between items-center text-[11px] text-neutral-500">
-            <span>Bucket: letsgo-backend</span>
-            <button
-              onClick={() => setIsR2ModalOpen(false)}
-              className="px-3 py-1 rounded bg-white/[0.06] hover:bg-white/[0.1] text-neutral-300 hover:text-white transition-colors"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const renderR2Modal = () => (
+    <R2VideoManagerModal
+      isOpen={isR2ModalOpen}
+      onClose={closeR2Modal}
+      onSelectVideo={handleSelectR2Source}
+    />
+  );
 
   // Cleanup object URL and orientation on unmount
   useEffect(() => {
