@@ -13,8 +13,10 @@ import {
   ArrowRight,
   RotateCcw,
   CheckCircle2,
+  HardDrive,
+  AlertTriangle,
 } from 'lucide-react';
-import { R2VideoItem, AppMediaSource, PersistedUploadMetadata } from '../types';
+import { R2VideoItem, AppMediaSource, PersistedUploadMetadata, R2StorageInfo } from '../types';
 import { api } from '../api/client';
 import { useUploadContext } from '../context/UploadContext';
 
@@ -66,36 +68,54 @@ export const R2VideoManagerModal: React.FC<R2VideoManagerModalProps> = ({
   const resumeFileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Drag and drop state
+  // Drag and drop & capacity state
   const [isDragging, setIsDragging] = useState(false);
+  const [storageInfo, setStorageInfo] = useState<R2StorageInfo | null>(null);
+  const [isLoadingStorage, setIsLoadingStorage] = useState(false);
+  const [uploadCapacityError, setUploadCapacityError] = useState<string | null>(null);
+
+  const fetchStorageInfo = useCallback(async () => {
+    setIsLoadingStorage(true);
+    try {
+      const info = await api.getR2StorageInfo();
+      setStorageInfo(info);
+    } catch (err) {
+      console.warn('Failed to load storage metrics:', err);
+    } finally {
+      setIsLoadingStorage(false);
+    }
+  }, []);
 
   const fetchVideos = useCallback(async () => {
     setIsLoadingVideos(true);
     setVideoListError(null);
     try {
-      const items = await api.listR2Videos();
+      const [items] = await Promise.all([api.listR2Videos(), fetchStorageInfo()]);
       setR2Videos(items);
     } catch (err: any) {
       setVideoListError(err.message || 'Failed to list videos from Cloudflare R2');
     } finally {
       setIsLoadingVideos(false);
     }
-  }, []);
+  }, [fetchStorageInfo]);
 
   useEffect(() => {
     if (isOpen) {
       fetchVideos();
+      fetchStorageInfo();
       refreshIncompleteUploads();
+      setUploadCapacityError(null);
     }
-  }, [isOpen, fetchVideos, refreshIncompleteUploads]);
+  }, [isOpen, fetchVideos, fetchStorageInfo, refreshIncompleteUploads]);
 
-  // When an upload completes, refresh the video list automatically
+  // When an upload completes or status changes, refresh the video list and storage metrics
   useEffect(() => {
+    fetchStorageInfo();
     const hasCompletedRecently = tasks.some((t) => t.status === 'completed');
     if (hasCompletedRecently) {
       fetchVideos();
     }
-  }, [tasks, fetchVideos]);
+  }, [tasks, fetchVideos, fetchStorageInfo]);
 
   if (!isOpen) return null;
 
@@ -171,7 +191,8 @@ export const R2VideoManagerModal: React.FC<R2VideoManagerModalProps> = ({
       try {
         await api.deleteR2Video(videoToDelete.key);
         setVideoToDelete(null);
-        await fetchVideos();
+        await Promise.all([fetchVideos(), fetchStorageInfo()]);
+        setUploadCapacityError(null);
       } catch (err: any) {
         setDeleteError(err.message || 'Failed to delete video');
       } finally {
@@ -180,16 +201,41 @@ export const R2VideoManagerModal: React.FC<R2VideoManagerModalProps> = ({
     });
   };
 
-  // Upload trigger
+  // Upload trigger with client-side check & backend validation
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
+    setUploadCapacityError(null);
     const fileList = Array.from(files);
+
+    if (storageInfo) {
+      const totalNewBytes = fileList.reduce((acc, f) => acc + f.size, 0);
+      const projected = storageInfo.storedBytes + storageInfo.reservedBytes + totalNewBytes;
+      if (projected >= storageInfo.limitBytes) {
+        const availableGib = (storageInfo.availableBytes / (1024 ** 3)).toFixed(2);
+        const requiredGib = (totalNewBytes / (1024 ** 3)).toFixed(2);
+        const rawMinToClear = projected - storageInfo.limitBytes + 1;
+        const minToClearGib = rawMinToClear > 0 && rawMinToClear < 0.01 * (1024 ** 3)
+          ? '0.01'
+          : Math.max(0, rawMinToClear / (1024 ** 3)).toFixed(2);
+        setUploadCapacityError(
+          `Not enough storage for this video. Available storage: ${availableGib} GiB. This video requires ${requiredGib} GiB. Clear at least ${minToClearGib} GiB of storage to upload it.`
+        );
+        setActiveTab('upload');
+        return;
+      }
+    }
+
     requireAdminAuth(() => {
       fileList.forEach((file) => {
-        startUpload(file).catch((err) => {
-          console.error('Failed to start upload:', err);
-        });
+        startUpload(file)
+          .then(() => fetchStorageInfo())
+          .catch((err) => {
+            if (err?.message?.includes('Not enough storage')) {
+              setUploadCapacityError(err.message);
+            }
+            console.error('Failed to start upload:', err);
+          });
       });
       setActiveTab('upload');
     });
@@ -310,6 +356,86 @@ export const R2VideoManagerModal: React.FC<R2VideoManagerModalProps> = ({
           className="hidden"
           onChange={handleResumeFileSelected}
         />
+
+        {/* Storage Capacity Overview (Strict 10 GiB Limit) */}
+        {storageInfo && (
+          <div className="px-4 sm:px-5 py-3 border-b border-white/10 bg-white/[0.015]">
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-3.5 h-3.5 text-sky-400" />
+                <span className="font-semibold text-neutral-200">Bucket Storage Accounting</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-500/10 border border-sky-500/20 text-sky-300 font-mono">
+                  Strict 10 GiB Limit
+                </span>
+              </div>
+              <div className="text-[11px] font-mono text-neutral-400">
+                <span className="text-neutral-200 font-medium">
+                  {((storageInfo.storedBytes + storageInfo.reservedBytes) / (1024 ** 3)).toFixed(2)} GiB
+                </span>{' '}
+                / {storageInfo.limitFormatted}
+              </div>
+            </div>
+
+            {/* Split Progress Bar */}
+            <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden flex mb-2">
+              <div
+                className="bg-sky-500 h-full transition-all duration-300"
+                style={{
+                  width: `${Math.min(100, (storageInfo.storedBytes / storageInfo.limitBytes) * 100)}%`,
+                }}
+                title={`Stored: ${storageInfo.storedFormatted}`}
+              />
+              <div
+                className="bg-amber-400 h-full transition-all duration-300"
+                style={{
+                  width: `${Math.min(
+                    100 - (storageInfo.storedBytes / storageInfo.limitBytes) * 100,
+                    (storageInfo.reservedBytes / storageInfo.limitBytes) * 100
+                  )}%`,
+                }}
+                title={`Reserved: ${storageInfo.reservedFormatted}`}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-[10px] sm:text-[11px] font-mono">
+              <div className="bg-white/[0.02] p-1.5 rounded-lg border border-white/5">
+                <span className="text-neutral-500 block text-[9px] uppercase font-sans">Stored Videos</span>
+                <span className="text-sky-300 font-medium">{storageInfo.storedFormatted}</span>
+                <span className="text-neutral-500 text-[9px] block font-sans">Confirmed</span>
+              </div>
+              <div className="bg-white/[0.02] p-1.5 rounded-lg border border-white/5">
+                <span className="text-neutral-500 block text-[9px] uppercase font-sans">Active Reserved</span>
+                <span className="text-amber-300 font-medium">{storageInfo.reservedFormatted}</span>
+                <span className="text-neutral-500 text-[9px] block font-sans">{storageInfo.activeUploadCount} in-flight</span>
+              </div>
+              <div className="bg-white/[0.02] p-1.5 rounded-lg border border-white/5">
+                <span className="text-neutral-500 block text-[9px] uppercase font-sans">Available Capacity</span>
+                <span className="text-emerald-400 font-medium">{storageInfo.availableFormatted}</span>
+                <span className="text-neutral-500 text-[9px] block font-sans">Remaining</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Capacity Exceeded Error Alert */}
+        {uploadCapacityError && (
+          <div className="bg-rose-500/10 border-b border-rose-500/20 px-4 py-3 flex items-start justify-between text-xs text-rose-200 animate-in fade-in">
+            <div className="flex items-start gap-2.5 min-w-0 pr-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold block text-rose-300 mb-0.5">Not enough storage for this video.</span>
+                <span className="text-[11px] text-rose-200/90 leading-relaxed block">{uploadCapacityError}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setUploadCapacityError(null)}
+              className="text-neutral-400 hover:text-white p-1 rounded hover:bg-rose-500/20 flex-shrink-0"
+              title="Dismiss warning"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Incomplete Uploads Alert Banner */}
         {incompleteUploads.length > 0 && (

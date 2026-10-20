@@ -7,7 +7,8 @@ import {
   R2InitiateUploadResponse,
   R2PartUrlItem,
   R2PartETag,
-  R2CompleteUploadResponse
+  R2CompleteUploadResponse,
+  R2StorageInfo
 } from '../types';
 import { API_BASE_URL } from '../config';
 
@@ -367,6 +368,17 @@ class ApiClient {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Failed to delete video from R2');
+    }
+    return res.json();
+  }
+
+  public async getR2StorageInfo(): Promise<R2StorageInfo> {
+    const res = await fetch(this.buildUrl('/api/videos/r2/storage-info'), {
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to fetch R2 storage info');
     }
     return res.json();
   }

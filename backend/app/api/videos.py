@@ -81,6 +81,18 @@ class R2DeleteResponse(BaseModel):
     key: str
     message: str
 
+class R2StorageInfoResponse(BaseModel):
+    limitBytes: int
+    storedBytes: int
+    reservedBytes: int
+    availableBytes: int
+    videoCount: int
+    activeUploadCount: int
+    limitFormatted: str
+    storedFormatted: str
+    reservedFormatted: str
+    availableFormatted: str
+
 # --- Admin & R2 Video Management Endpoints ---
 
 @router.post("/r2/admin/verify", response_model=AdminVerifyResponse)
@@ -92,6 +104,11 @@ async def verify_r2_admin(req: AdminVerifyRequest, request: Request):
 @router.get("/r2")
 async def list_r2_videos():
     return await r2_service.list_videos()
+
+@router.get("/r2/storage-info", response_model=R2StorageInfoResponse)
+async def get_r2_storage_info():
+    res = await r2_service.get_storage_info()
+    return R2StorageInfoResponse(**res)
 
 @router.post("/r2/play-url", response_model=R2PlayUrlResponse)
 async def get_r2_play_url(req: R2PlayUrlRequest):

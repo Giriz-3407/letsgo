@@ -159,3 +159,16 @@ export interface PersistedUploadMetadata {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface R2StorageInfo {
+  limitBytes: number;
+  storedBytes: number;
+  reservedBytes: number;
+  availableBytes: number;
+  videoCount: number;
+  activeUploadCount: number;
+  limitFormatted: string;
+  storedFormatted: string;
+  reservedFormatted: string;
+  availableFormatted: string;
+}

@@ -17,6 +17,7 @@ import {
   Terminal,
   X,
   Loader2,
+  AlertCircle,
 } from 'lucide-react';
 
 interface Props {
@@ -70,10 +71,21 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
     const unsubs: (() => void)[] = [];
 
     unsubs.push(
-      wsClient.on('STATUS_CHANGE', ({ connected }) => {
+      wsClient.on('STATUS_CHANGE', ({ connected, code, reason }) => {
         setSyncStatus(connected ? 'SYNCED' : 'DISCONNECTED');
+        if (code === 4004) {
+          setError(`Room ${roomId} was not found or has expired.`);
+        }
         if (connected && mediaSourceRef.current) {
           wsClient.sendMediaLoaded(true);
+        }
+      })
+    );
+
+    unsubs.push(
+      wsClient.on('ERROR', (msg: any) => {
+        if (msg.code === 'ROOM_NOT_FOUND') {
+          setError(msg.message || `Room ${roomId} was not found or has expired.`);
         }
       })
     );
@@ -340,6 +352,34 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
   const handleLeave = () => {
     onNavigate('home');
   };
+
+  if (error && !roomState) {
+    return (
+      <div className="min-h-screen bg-[#09090b] text-neutral-100 flex flex-col items-center justify-center p-6 text-center gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+          <AlertCircle className="w-6 h-6" />
+        </div>
+        <div>
+          <h2 className="text-base font-semibold text-neutral-100">Room Unavailable</h2>
+          <p className="text-xs text-neutral-400 mt-1 max-w-sm">{error}</p>
+        </div>
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            onClick={() => onNavigate('create')}
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-black text-xs font-semibold rounded-lg transition-colors"
+          >
+            Create New Room
+          </button>
+          <button
+            onClick={() => onNavigate('home')}
+            className="px-4 py-2 bg-white/5 hover:bg-white/10 text-neutral-300 hover:text-white text-xs font-medium rounded-lg transition-colors"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!roomState && !error) {
     return (

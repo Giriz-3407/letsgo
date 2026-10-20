@@ -9,6 +9,9 @@ from app.config import settings
 from app.auth.admin import admin_auth, AdminSession
 from app.storage.r2 import R2StorageService
 
+import uuid
+from app.api.videos import r2_service
+
 @pytest.fixture(autouse=True)
 def reset_admin_auth():
     admin_auth._sessions.clear()
@@ -16,15 +19,19 @@ def reset_admin_auth():
     settings.R2_ADMIN_PASSWORD = "admin123"
     settings.ENVIRONMENT = "development"
     settings.DEBUG = True
+    if r2_service and r2_service._reservation_store:
+        r2_service._reservation_store.clear_all()
 
 @pytest.fixture
 def mock_s3():
     s3 = MagicMock()
-    s3.create_multipart_upload.return_value = {
-        "UploadId": "test-upload-id-12345",
-        "Bucket": settings.R2_BUCKET_NAME,
-        "Key": "videos/test_key.mp4"
-    }
+    def fake_create_multipart_upload(**kwargs):
+        return {
+            "UploadId": f"mock-upload-{uuid.uuid4().hex[:12]}",
+            "Bucket": kwargs.get("Bucket", settings.R2_BUCKET_NAME),
+            "Key": kwargs.get("Key", "videos/test_key.mp4")
+        }
+    s3.create_multipart_upload.side_effect = fake_create_multipart_upload
     s3.generate_presigned_url.return_value = "https://r2.test.com/upload-part?partNumber=1&signature=mock"
     s3.complete_multipart_upload.return_value = {
         "Bucket": settings.R2_BUCKET_NAME,

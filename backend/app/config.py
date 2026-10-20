@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     R2_ADMIN_PASSWORD: str = os.getenv("R2_ADMIN_PASSWORD", "admin123")
     R2_ADMIN_TOKEN_SECRET: str = ""
     R2_UPLOAD_EXPIRY_SECONDS: int = 86400  # 24 hours
+    R2_STORAGE_LIMIT_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GiB
+    R2_RESERVATIONS_DB_PATH: Path = BASE_DIR / "r2_reservations.db"
     
     # Google OAuth & Picker
     GOOGLE_CLIENT_ID: str = ""
@@ -37,6 +39,7 @@ class Settings(BaseSettings):
     
     # Security
     SESSION_SECRET: str = "watchtogether-secret-key-change-in-production-12345"
+    CORS_ORIGIN_REGEX: str = r"https://.*\.vercel\.app|https://.*\.onrender\.com|https?://localhost.*|https?://127\.0\.0\.1.*|https?://192\.168\..*|https?://10\..*"
     
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR.parent / ".env"),

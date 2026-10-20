@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Dict, Set, Optional, Tuple
 from fastapi import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 from pydantic import ValidationError
 
 from ..rooms.manager import room_manager
@@ -34,7 +35,8 @@ class ConnectionManager:
         self._socket_map: Dict[WebSocket, Tuple[str, str]] = {}
 
     async def connect(self, room_id: str, participant_id: str, websocket: WebSocket):
-        await websocket.accept()
+        if websocket.client_state != WebSocketState.CONNECTED:
+            await websocket.accept()
         if room_id not in self._room_connections:
             self._room_connections[room_id] = {}
         self._room_connections[room_id][participant_id] = websocket
@@ -82,14 +84,36 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
     display_name = query_params.get("display_name", "Viewer")
 
     if not participant_id:
+        if websocket.client_state != WebSocketState.CONNECTED:
+            await websocket.accept()
+        await websocket.send_json({"type": "ERROR", "code": "MISSING_PARTICIPANT_ID", "message": "Missing participant_id"})
         await websocket.close(code=4001, reason="Missing participant_id")
         return
 
     # Check if room exists
     room = await room_manager.get_room(room_id)
     if not room:
-        await websocket.close(code=4004, reason="Room not found")
-        return
+        # Check if caller is host who created this room before a server restart or reload
+        is_host_reconnect = display_name == "Host" or (participant_id and participant_id.startswith("user_"))
+        if is_host_reconnect:
+            logger.info(f"Host reconnecting to expired/restarted room {room_id}, restoring room.")
+            room = await room_manager.create_room(
+                room_id=room_id,
+                host_id=participant_id,
+                host_display_name=display_name,
+                control_mode=ControlMode.HOST_ONLY,
+                pause_on_buffer=False
+            )
+        else:
+            if websocket.client_state != WebSocketState.CONNECTED:
+                await websocket.accept()
+            await websocket.send_json({
+                "type": "ERROR",
+                "code": "ROOM_NOT_FOUND",
+                "message": f"Room '{room_id}' not found or has expired."
+            })
+            await websocket.close(code=4004, reason="Room not found")
+            return
 
     # Join room in manager
     try:
@@ -97,6 +121,13 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
             room_id=room_id, participant_id=participant_id, display_name=display_name
         )
     except Exception as e:
+        if websocket.client_state != WebSocketState.CONNECTED:
+            await websocket.accept()
+        await websocket.send_json({
+            "type": "ERROR",
+            "code": "JOIN_ERROR",
+            "message": str(e)
+        })
         await websocket.close(code=4000, reason=str(e))
         return
 

@@ -45,6 +45,9 @@ export class WebSocketRoomClient {
       this.ws.onmessage = (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data) as InboundMessage;
+          if (data.type === 'ERROR' && (data.code === 'ROOM_NOT_FOUND' || data.code === 'MISSING_PARTICIPANT_ID')) {
+            this.shouldReconnect = false;
+          }
           this.emit(data.type, data);
         } catch (err) {
           console.error('[WS] Failed to parse message', err);
@@ -55,7 +58,10 @@ export class WebSocketRoomClient {
         this.isConnecting = false;
         this.stopTimeSyncPing();
         this.emit('STATUS_CHANGE', { connected: false, code: event.code, reason: event.reason });
-        if (this.shouldReconnect && event.code !== 4004 && event.code !== 4001) {
+        if (event.code === 4004 || event.code === 4001) {
+          this.shouldReconnect = false;
+        }
+        if (this.shouldReconnect) {
           this.scheduleReconnect();
         }
       };

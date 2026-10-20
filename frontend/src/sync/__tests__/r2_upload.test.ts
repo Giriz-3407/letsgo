@@ -246,4 +246,126 @@ describe('Admin R2 Video Manager & Multipart Upload Suite', () => {
     const missingParts = allParts.filter((p) => !completedSet.has(p));
     assert.deepEqual(missingParts, [2]);
   });
+
+  test('5. Storage info query and parsed capacity metrics', async () => {
+    const originalFetch = globalThis.fetch;
+    const mockStorageInfo = {
+      limitBytes: 10737418240,
+      storedBytes: 6442450944,
+      reservedBytes: 1073741824,
+      availableBytes: 3221225472,
+      videoCount: 4,
+      activeUploadCount: 1,
+      limitFormatted: '10.00 GiB',
+      storedFormatted: '6.00 GiB',
+      reservedFormatted: '1.00 GiB',
+      availableFormatted: '3.00 GiB',
+    };
+
+    globalThis.fetch = async (url: any) => {
+      if (url.toString().includes('/api/videos/r2/storage-info')) {
+        return new Response(JSON.stringify(mockStorageInfo), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    try {
+      const res = await api.getR2StorageInfo();
+      assert.equal(res.limitBytes, 10737418240);
+      assert.equal(res.storedBytes, 6442450944);
+      assert.equal(res.reservedBytes, 1073741824);
+      assert.equal(res.availableBytes, 3221225472);
+      assert.equal(res.limitFormatted, '10.00 GiB');
+      assert.equal(res.storedFormatted, '6.00 GiB');
+      assert.equal(res.availableFormatted, '3.00 GiB');
+      assert.equal(res.videoCount, 4);
+      assert.equal(res.activeUploadCount, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('6. Frontend storage capacity pre-validation and rejection format', () => {
+    const GIB = 1024 ** 3;
+    const storageInfo = {
+      limitBytes: 10 * GIB,
+      storedBytes: 8 * GIB,
+      reservedBytes: 0,
+      availableBytes: 2 * GIB,
+      videoCount: 2,
+      activeUploadCount: 0,
+      limitFormatted: '10.00 GiB',
+      storedFormatted: '8.00 GiB',
+      reservedFormatted: '0.00 GiB',
+      availableFormatted: '2.00 GiB',
+    };
+
+    const validateUpload = (files: { name: string; size: number }[]): { valid: boolean; error?: string } => {
+      const totalNewBytes = files.reduce((acc, f) => acc + f.size, 0);
+      const projected = storageInfo.storedBytes + storageInfo.reservedBytes + totalNewBytes;
+      if (projected >= storageInfo.limitBytes) {
+        const availableGib = (storageInfo.availableBytes / (1024 ** 3)).toFixed(2);
+        const requiredGib = (totalNewBytes / (1024 ** 3)).toFixed(2);
+        const rawMinToClear = projected - storageInfo.limitBytes + 1;
+        const minToClearGib = rawMinToClear > 0 && rawMinToClear < 0.01 * (1024 ** 3)
+          ? '0.01'
+          : Math.max(0, rawMinToClear / (1024 ** 3)).toFixed(2);
+        return {
+          valid: false,
+          error: `Not enough storage for this video. Available storage: ${availableGib} GiB. This video requires ${requiredGib} GiB. Clear at least ${minToClearGib} GiB of storage to upload it.`,
+        };
+      }
+      return { valid: true };
+    };
+
+    // Case A: 3 GiB file exceeds 2 GiB available
+    const resOver = validateUpload([{ name: 'large.mp4', size: 3 * GIB }]);
+    assert.equal(resOver.valid, false);
+    assert.equal(
+      resOver.error,
+      'Not enough storage for this video. Available storage: 2.00 GiB. This video requires 3.00 GiB. Clear at least 1.00 GiB of storage to upload it.'
+    );
+
+    // Case B: Exactly 2 GiB file would bring total to 10 GiB (strictly < 10 GiB rule rejects it)
+    const resExact = validateUpload([{ name: 'exact.mp4', size: 2 * GIB }]);
+    assert.equal(resExact.valid, false);
+    assert.equal(
+      resExact.error,
+      'Not enough storage for this video. Available storage: 2.00 GiB. This video requires 2.00 GiB. Clear at least 0.01 GiB of storage to upload it.'
+    );
+
+    // Case C: 1.5 GiB file is strictly below 10 GiB -> accepted
+    const resValid = validateUpload([{ name: 'fits.mp4', size: 1.5 * GIB }]);
+    assert.equal(resValid.valid, true);
+    assert.equal(resValid.error, undefined);
+  });
+
+  test('7. API error handling for storage limit rejection (400 Bad Request)', async () => {
+    api.setR2AdminToken('valid-token');
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          detail: 'Not enough storage for this video. Available storage: 1.00 GiB. This video requires 2.00 GiB. Clear at least 1.00 GiB of storage to upload it.',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    };
+
+    try {
+      await assert.rejects(
+        () => api.initiateR2Upload('huge.mp4', 2 * (1024 ** 3)),
+        /Not enough storage for this video\. Available storage: 1\.00 GiB\. This video requires 2\.00 GiB\. Clear at least 1\.00 GiB of storage to upload it\./
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

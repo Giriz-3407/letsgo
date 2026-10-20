@@ -13,6 +13,7 @@ from botocore.exceptions import ClientError
 
 from ..config import settings
 from ..models.room import VideoMetadata
+from .reservations import ReservationStore, TOTAL_LIMIT_BYTES, format_gib
 
 SUPPORTED_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv"}
 MIN_PART_SIZE = 5 * 1024 * 1024       # 5 MiB (S3 minimum part size except last)
@@ -34,9 +35,14 @@ class UploadSessionData:
     status: str  # "in_progress", "completed", "aborted"
 
 class R2StorageService:
-    def __init__(self, s3_client: Optional[Any] = None):
+    def __init__(
+        self,
+        s3_client: Optional[Any] = None,
+        reservation_store: Optional[ReservationStore] = None
+    ):
         self._s3_client = s3_client
         self._upload_sessions: Dict[str, UploadSessionData] = {}
+        self._reservation_store = reservation_store or ReservationStore(settings.R2_RESERVATIONS_DB_PATH)
 
     def is_configured(self) -> bool:
         return bool(
@@ -153,6 +159,67 @@ class R2StorageService:
 
         return videos
 
+    async def get_bucket_storage_usage(self) -> tuple[int, int]:
+        """
+        Query Cloudflare R2 using the S3-compatible API and calculate the total size
+        of existing video objects in the configured bucket.
+        Uses paginated ListObjectsV2 results and sums each object's Size in bytes.
+        Includes all existing video objects, including files uploaded outside WatchTogether.
+        Excludes non-video objects and folder placeholders.
+        """
+        client = self._get_client()
+        total_bytes = 0
+        video_count = 0
+
+        try:
+            paginator = client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=settings.R2_BUCKET_NAME):
+                for item in page.get("Contents", []):
+                    key = item.get("Key", "")
+                    suffix = Path(key).suffix.lower()
+                    if suffix in SUPPORTED_VIDEO_EXTS:
+                        total_bytes += item.get("Size", 0)
+                        video_count += 1
+        except ClientError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Error querying bucket storage usage from R2: {e.response.get('Error', {}).get('Message', str(e))}"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to calculate R2 storage usage: {str(e)}")
+
+        return total_bytes, video_count
+
+    async def get_storage_info(self) -> Dict[str, Any]:
+        """
+        Returns confirmed server-side storage metrics including:
+        - Current stored video size (from R2 ListObjectsV2)
+        - Reserved space for active uploads (from shared persistent DB)
+        - Available upload capacity (strictly < 10 GiB)
+        - The 10 GiB limit
+        """
+        stored_bytes, video_count = await self.get_bucket_storage_usage()
+        now = time.time()
+        self._reservation_store.clean_expired(now)
+        reserved_bytes = self._reservation_store.get_reserved_bytes(now)
+        active_reservations = self._reservation_store.get_active_reservation_count(now)
+        available_bytes = max(0, TOTAL_LIMIT_BYTES - (stored_bytes + reserved_bytes))
+
+        return {
+            "limitBytes": TOTAL_LIMIT_BYTES,
+            "storedBytes": stored_bytes,
+            "reservedBytes": reserved_bytes,
+            "availableBytes": available_bytes,
+            "videoCount": video_count,
+            "activeUploadCount": active_reservations,
+            "limitFormatted": format_gib(TOTAL_LIMIT_BYTES),
+            "storedFormatted": format_gib(stored_bytes),
+            "reservedFormatted": format_gib(reserved_bytes),
+            "availableFormatted": format_gib(available_bytes),
+        }
+
     async def generate_presigned_playback_url(self, object_key: str, expires_in: int = 3600) -> str:
         self.validate_object_key(object_key)
         client = self._get_client()
@@ -192,6 +259,20 @@ class R2StorageService:
             suffix = Path(sanitized_name).suffix.lower()
             content_type = "video/mp4" if suffix == ".mp4" else f"video/{suffix[1:]}"
 
+        # 1. Strict Storage Capacity Check BEFORE calling CreateMultipartUpload
+        stored_bytes, _ = await self.get_bucket_storage_usage()
+        temp_id = f"pending_{uuid.uuid4().hex}"
+
+        success, err_msg, _ = self._reservation_store.reserve(
+            upload_id=temp_id,
+            object_key=object_key,
+            file_size=file_size,
+            existing_stored_bytes=stored_bytes,
+            ttl_seconds=settings.R2_UPLOAD_EXPIRY_SECONDS
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail=err_msg)
+
         client = self._get_client()
         try:
             response = client.create_multipart_upload(
@@ -200,11 +281,16 @@ class R2StorageService:
                 ContentType=content_type,
             )
             upload_id = response["UploadId"]
+            self._reservation_store.rebind_upload_id(temp_id, upload_id)
         except ClientError as e:
+            self._reservation_store.release(temp_id)
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed to initiate multipart upload in R2: {e.response.get('Error', {}).get('Message', str(e))}"
             )
+        except Exception:
+            self._reservation_store.release(temp_id)
+            raise
 
         session = UploadSessionData(
             upload_id=upload_id,
@@ -370,6 +456,9 @@ class R2StorageService:
         if session:
             session.status = "completed"
 
+        # Complete and reconcile reservation against actual stored bytes
+        self._reservation_store.complete(upload_id)
+
         return {
             "status": "completed",
             "objectKey": object_key,
@@ -414,6 +503,8 @@ class R2StorageService:
 
         if session:
             session.status = "aborted"
+
+        self._reservation_store.release(upload_id)
 
         return {"status": "aborted", "uploadId": upload_id, "message": "Multipart upload aborted successfully"}
 
@@ -477,6 +568,9 @@ class R2StorageService:
                 status_code=502,
                 detail=f"Failed to list or abort abandoned multipart uploads: {str(e)}"
             )
+
+        # Clean up any expired reservations
+        self._reservation_store.clean_expired(now)
 
         return {
             "status": "cleanup_completed",

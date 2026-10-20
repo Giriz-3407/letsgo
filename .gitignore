@@ -22,3 +22,8 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local databases & temp files
+*.db
+*.sqlite*
+backend/r2_reservations.db
