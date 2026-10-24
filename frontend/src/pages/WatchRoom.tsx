@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { RoomState, ControlMode, SyncStatus, AppMediaSource } from '../types';
+import { RoomState, ControlMode, SyncStatus, AppMediaSource, VideoMetadata } from '../types';
 import { ClockSynchronizer } from '../sync/ClockSynchronizer';
 import { WebSocketRoomClient } from '../sync/WebSocketRoomClient';
 import { PlaybackSynchronizer, SyncStats } from '../sync/PlaybackSynchronizer';
@@ -33,8 +33,58 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [mediaSource, setMediaSource] = useState<AppMediaSource | null>(null);
-  const mediaSourceRef = useRef<AppMediaSource | null>(null);
+  const [mediaSource, setMediaSource] = useState<AppMediaSource | null>(() => {
+    try {
+      const saved = sessionStorage.getItem(`wt_room_media_${roomId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.type === 'r2' && parsed.src) {
+          return parsed as AppMediaSource;
+        }
+      }
+    } catch {}
+    return null;
+  });
+  const mediaSourceRef = useRef<AppMediaSource | null>(mediaSource);
+
+  // Helper to sync R2 video from room state / message
+  const syncMediaFromVideoMeta = (video: VideoMetadata | null | undefined) => {
+    if (!video) return;
+    if (video.provider === 'r2' && video.r2Key) {
+      if (mediaSourceRef.current?.r2Key === video.r2Key && mediaSourceRef.current?.src) {
+        return;
+      }
+      api.getR2PlayUrl(video.r2Key)
+        .then((res) => {
+          const source: AppMediaSource = {
+            type: 'r2',
+            title: video.name,
+            src: res.url,
+            r2Key: video.r2Key || undefined,
+            size: video.size,
+          };
+          setMediaSource(source);
+          sessionStorage.setItem(`wt_room_media_${roomId}`, JSON.stringify(source));
+        })
+        .catch((err) => console.warn('[Room] Could not load R2 video playback URL:', err));
+    }
+  };
+
+  // If restored R2 source from sessionStorage on refresh, verify/refresh presigned URL
+  useEffect(() => {
+    if (mediaSource?.type === 'r2' && mediaSource.r2Key) {
+      api.getR2PlayUrl(mediaSource.r2Key)
+        .then((res) => {
+          setMediaSource((prev) => {
+            if (!prev || prev.r2Key !== mediaSource.r2Key) return prev;
+            const updated = { ...prev, src: res.url };
+            sessionStorage.setItem(`wt_room_media_${roomId}`, JSON.stringify(updated));
+            return updated;
+          });
+        })
+        .catch((err) => console.warn('[Room] Failed to refresh restored presigned URL:', err));
+    }
+  }, [roomId]);
 
   // Stored participant identity
   const currentUserId = useMemo(() => {
@@ -102,6 +152,7 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
           synchronizer.updateRoomState(state);
           return state;
         });
+        syncMediaFromVideoMeta(state.video);
       })
     );
 
@@ -288,6 +339,7 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
           synchronizer.updateRoomState(updated);
           return updated;
         });
+        syncMediaFromVideoMeta(msg.video);
       })
     );
 
@@ -469,20 +521,69 @@ export const WatchRoom: React.FC<Props> = ({ roomId, onNavigate }) => {
               } else {
                 setSelectedFile(null);
               }
+              if (source) {
+                if (source.type === 'r2') {
+                  sessionStorage.setItem(`wt_room_media_${roomId}`, JSON.stringify(source));
+                  if (canControl) {
+                    wsClient.sendChangeVideo({
+                      id: source.r2Key || source.title,
+                      name: source.title,
+                      mimeType: 'video/mp4',
+                      size: source.size ?? null,
+                      streamUrl: source.src,
+                      provider: 'r2',
+                      r2Key: source.r2Key,
+                    });
+                  }
+                } else {
+                  sessionStorage.setItem(
+                    `wt_room_media_${roomId}`,
+                    JSON.stringify({ type: 'local', title: source.title, size: source.size })
+                  );
+                  if (canControl) {
+                    wsClient.sendChangeVideo({
+                      id: source.title,
+                      name: source.title,
+                      mimeType: 'video/mp4',
+                      size: source.size ?? null,
+                      streamUrl: '',
+                      provider: 'local',
+                    });
+                  }
+                }
+              } else {
+                sessionStorage.removeItem(`wt_room_media_${roomId}`);
+              }
             }}
             selectedFileName={mediaSource?.title || selectedFile?.name}
             onFileSelect={(file) => {
               setSelectedFile(file);
               if (file) {
-                setMediaSource({
+                const source: AppMediaSource = {
                   type: 'local',
                   title: file.name,
                   src: URL.createObjectURL(file),
                   file,
                   size: file.size,
-                });
+                };
+                setMediaSource(source);
+                sessionStorage.setItem(
+                  `wt_room_media_${roomId}`,
+                  JSON.stringify({ type: 'local', title: file.name, size: file.size })
+                );
+                if (canControl) {
+                  wsClient.sendChangeVideo({
+                    id: file.name,
+                    name: file.name,
+                    mimeType: 'video/mp4',
+                    size: file.size,
+                    streamUrl: '',
+                    provider: 'local',
+                  });
+                }
               } else {
                 setMediaSource(null);
+                sessionStorage.removeItem(`wt_room_media_${roomId}`);
               }
             }}
           />

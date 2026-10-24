@@ -23,7 +23,10 @@ from ..models.messages import (
     SettingsChangedBroadcast,
     ErrorBroadcast,
 )
-from ..models.room import ControlMode
+from ..models.room import ControlMode, VideoMetadata
+from ..storage.local import LocalStorageProvider
+
+local_storage = LocalStorageProvider()
 
 logger = logging.getLogger("watchtogether.ws")
 
@@ -209,6 +212,25 @@ async def handle_websocket_connection(websocket: WebSocket, room_id: str):
                         seekReadyParticipants=getattr(r, "seekReadyParticipants", []),
                     )
                     await connection_manager.send_personal(websocket, s_msg.model_dump(mode="json"))
+
+            elif msg_type == MessageType.CHANGE_VIDEO:
+                video_dict = msg.get("video")
+                video_id = msg.get("videoId")
+                try:
+                    video_meta = None
+                    if video_dict:
+                        video_meta = VideoMetadata(**video_dict)
+                    elif video_id:
+                        video_meta = await local_storage.get_video_metadata(video_id)
+
+                    if video_meta:
+                        updated_room = await room_manager.handle_change_video(room_id, participant_id, video_meta)
+                        bc = VideoChangedBroadcast(video=updated_room.video, serverTime=room_manager.current_server_time_ms())
+                        await connection_manager.broadcast(room_id, bc.model_dump(mode="json"))
+                except Exception as e:
+                    await connection_manager.send_personal(
+                        websocket, ErrorBroadcast(message=str(e), code="CHANGE_VIDEO_ERROR").model_dump(mode="json")
+                    )
 
             elif msg_type == MessageType.PLAY:
                 pos = float(msg.get("position", 0.0))

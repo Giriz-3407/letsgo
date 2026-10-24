@@ -1,4 +1,4 @@
-import { InboundMessage, ControlMode } from '../types';
+import { InboundMessage, ControlMode, VideoMetadata } from '../types';
 import { WS_BASE_URL } from '../config';
 
 export type MessageHandler = (message: InboundMessage) => void;
@@ -150,6 +150,10 @@ export class WebSocketRoomClient {
 
   public sendChangeSettings(controlMode?: ControlMode, pauseOnBuffer?: boolean): void {
     this.send({ type: 'CHANGE_SETTINGS', controlMode, pauseOnBuffer });
+  }
+
+  public sendChangeVideo(video: VideoMetadata): void {
+    this.send({ type: 'CHANGE_VIDEO', video });
   }
 
   public on(type: string, handler: MessageHandler): () => void {

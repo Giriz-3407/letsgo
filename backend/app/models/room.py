@@ -25,6 +25,7 @@ class VideoMetadata(BaseModel):
     streamUrl: str
     downloadUrl: Optional[str] = None
     provider: str = "local"
+    r2Key: Optional[str] = None
 
 class RoomState(BaseModel):
     roomId: str

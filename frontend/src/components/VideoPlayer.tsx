@@ -137,88 +137,23 @@ export const VideoPlayer: React.FC<Props> = ({
   const controlsTimeoutRef = useRef<number | null>(null);
   const speedMenuRef = useRef<HTMLDivElement | null>(null);
 
-  // Web Audio API refs for variable volume control on mobile (Android / iOS) and desktop
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
-  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const connectedVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  const setupAudioGraph = (videoEl: HTMLVideoElement) => {
-    if (typeof window === 'undefined') return;
-    if (connectedVideoRef.current === videoEl) return;
-
-    try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContextClass();
-      }
-      const ctx = audioContextRef.current;
-
-      if (!gainNodeRef.current) {
-        const gain = ctx.createGain();
-        const effectiveVol = isMutedRef.current ? 0 : volumeRef.current;
-        gain.gain.value = effectiveVol * effectiveVol;
-        gain.connect(ctx.destination);
-        gainNodeRef.current = gain;
-      }
-
-      const source = ctx.createMediaElementSource(videoEl);
-      source.connect(gainNodeRef.current);
-      sourceNodeRef.current = source;
-      connectedVideoRef.current = videoEl;
-
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
-    } catch (err) {
-      console.warn('[WebAudio] Could not attach MediaElementAudioSourceNode:', err);
-    }
-  };
-
   const applyAudioVolume = (vol: number, muted: boolean) => {
     volumeRef.current = vol;
     isMutedRef.current = muted;
     const effectiveVol = muted ? 0 : Math.max(0, Math.min(1, vol));
-    // Quadratic taper: matches logarithmic decibel perception across 0.0 -> 1.0
-    const gainVal = effectiveVol * effectiveVol;
 
-    // Web Audio GainNode (provides true variable volume across mobile Android/iOS + desktop)
-    if (gainNodeRef.current && audioContextRef.current) {
-      try {
-        const currentTime = audioContextRef.current.currentTime;
-        gainNodeRef.current.gain.cancelScheduledValues(currentTime);
-        gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, currentTime);
-        gainNodeRef.current.gain.linearRampToValueAtTime(gainVal, currentTime + 0.015);
-      } catch (_) {
-        try {
-          gainNodeRef.current.gain.value = gainVal;
-        } catch (_) {}
-      }
-    }
-
-    // Video element native volume / muted properties
+    // Video element native volume and mute properties directly output to browser audio pipeline
     if (videoRef.current) {
       videoRef.current.muted = muted || effectiveVol === 0;
       try {
-        if (gainNodeRef.current) {
-          // If muted, ensure native volume is also 0; otherwise 1.0 when GainNode handles attenuation
-          videoRef.current.volume = muted || effectiveVol === 0 ? 0 : 1.0;
-        } else {
-          // Native fallback when Web Audio is not available
-          videoRef.current.volume = effectiveVol;
-        }
+        videoRef.current.volume = effectiveVol;
       } catch (_) {}
     }
   };
 
   const ensureAudioRunning = () => {
     if (videoRef.current) {
-      setupAudioGraph(videoRef.current);
-    }
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume().catch(() => {});
+      applyAudioVolume(volumeRef.current, isMutedRef.current);
     }
   };
 
@@ -414,19 +349,6 @@ export const VideoPlayer: React.FC<Props> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Initialize audio context on file select gesture
-    if (typeof window !== 'undefined') {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioContextClass && !audioContextRef.current) {
-        try {
-          audioContextRef.current = new AudioContextClass();
-        } catch (_) {}
-      }
-      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume().catch(() => {});
-      }
-    }
-
     // Revoke previous object URL if any
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
@@ -502,11 +424,6 @@ export const VideoPlayer: React.FC<Props> = ({
           orientation.unlock();
         } catch (_) {}
       }
-      // Close Web Audio context
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close().catch(() => {});
-        audioContextRef.current = null;
-      }
       if (singleTapTimeoutRef.current) {
         clearTimeout(singleTapTimeoutRef.current);
         singleTapTimeoutRef.current = null;
@@ -519,9 +436,6 @@ export const VideoPlayer: React.FC<Props> = ({
         clearTimeout(feedbackTimeoutRef.current);
         feedbackTimeoutRef.current = null;
       }
-      gainNodeRef.current = null;
-      sourceNodeRef.current = null;
-      connectedVideoRef.current = null;
     };
   }, []);
 
@@ -583,7 +497,6 @@ export const VideoPlayer: React.FC<Props> = ({
     };
     const onLoadedMetadata = () => {
       setDuration(el.duration);
-      setupAudioGraph(el);
       applyAudioVolume(volumeRef.current, isMutedRef.current);
     };
     const onWaiting = () => setIsBuffering(true);
@@ -593,7 +506,6 @@ export const VideoPlayer: React.FC<Props> = ({
     };
     const onCanPlay = () => {
       setIsBuffering(false);
-      setupAudioGraph(el);
       applyAudioVolume(volumeRef.current, isMutedRef.current);
     };
 
@@ -797,10 +709,9 @@ export const VideoPlayer: React.FC<Props> = ({
     };
   }, [canControl, activeSrc, duration, currentTime]);
 
-  // Synchronize audio graph and volume on activeSrc change
+  // Synchronize native audio volume on activeSrc change
   useEffect(() => {
     if (videoRef.current && activeSrc) {
-      setupAudioGraph(videoRef.current);
       applyAudioVolume(volumeRef.current, isMutedRef.current);
     }
   }, [activeSrc]);

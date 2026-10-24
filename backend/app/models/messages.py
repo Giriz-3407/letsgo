@@ -75,7 +75,8 @@ class ChangeSettingsMessage(BaseModel):
 
 class ChangeVideoMessage(BaseModel):
     type: MessageType = MessageType.CHANGE_VIDEO
-    videoId: str
+    videoId: Optional[str] = None
+    video: Optional[VideoMetadata] = None
 
 class PlaybackRateMessage(BaseModel):
     type: MessageType = MessageType.PLAYBACK_RATE

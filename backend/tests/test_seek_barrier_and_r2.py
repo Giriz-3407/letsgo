@@ -166,7 +166,12 @@ async def test_r2_service_mocked_listing_and_presigned_url():
     assert "X-Amz-Signature" in signed_url
     mock_s3.generate_presigned_url.assert_called_once_with(
         ClientMethod="get_object",
-        Params={"Bucket": settings.R2_BUCKET_NAME, "Key": "movies/matrix.mp4"},
+        Params={
+            "Bucket": settings.R2_BUCKET_NAME,
+            "Key": "movies/matrix.mp4",
+            "ResponseContentType": "video/mp4",
+            "ResponseContentDisposition": "inline",
+        },
         ExpiresIn=1800
     )
 

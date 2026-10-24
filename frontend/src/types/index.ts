@@ -19,6 +19,7 @@ export interface VideoMetadata {
   streamUrl: string;
   downloadUrl?: string | null;
   provider: string;
+  r2Key?: string | null;
 }
 
 export type MediaSourceType = 'local' | 'r2';

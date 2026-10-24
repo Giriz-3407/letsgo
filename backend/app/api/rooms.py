@@ -33,8 +33,9 @@ class CreateRoomResponse(BaseModel):
     controlMode: ControlMode
 
 class UpdateVideoRequest(BaseModel):
-    videoId: str
     hostId: str
+    videoId: Optional[str] = None
+    video: Optional[VideoMetadata] = None
 
 class UpdateSettingsRequest(BaseModel):
     hostId: str
@@ -108,7 +109,12 @@ async def set_room_video(room_id: str, req: UpdateVideoRequest):
     if room.hostId != req.hostId:
         raise HTTPException(status_code=403, detail="Only host can change the video")
 
-    video = await local_storage.get_video_metadata(req.videoId)
+    video = None
+    if req.video:
+        video = req.video
+    elif req.videoId:
+        video = await local_storage.get_video_metadata(req.videoId)
+
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 

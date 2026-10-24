@@ -16,6 +16,19 @@ from ..models.room import VideoMetadata
 from .reservations import ReservationStore, TOTAL_LIMIT_BYTES, format_gib
 
 SUPPORTED_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv"}
+
+def get_video_content_type(key_or_name: str) -> str:
+    suffix = Path(key_or_name).suffix.lower()
+    mapping = {
+        ".mp4": "video/mp4",
+        ".m4v": "video/mp4",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".ogv": "video/ogg",
+    }
+    return mapping.get(suffix, "video/mp4")
 MIN_PART_SIZE = 5 * 1024 * 1024       # 5 MiB (S3 minimum part size except last)
 DEFAULT_PART_SIZE = 64 * 1024 * 1024  # 64 MiB
 MAX_PART_COUNT = 10000
@@ -138,7 +151,7 @@ class R2StorageService:
                     key = item.get("Key", "")
                     suffix = Path(key).suffix.lower()
                     if suffix in SUPPORTED_VIDEO_EXTS:
-                        mime = "video/mp4" if suffix == ".mp4" else f"video/{suffix[1:]}"
+                        mime = get_video_content_type(key)
                         videos.append({
                             "key": key,
                             "name": Path(key).name,
@@ -225,12 +238,15 @@ class R2StorageService:
         client = self._get_client()
 
         try:
+            params = {
+                "Bucket": settings.R2_BUCKET_NAME,
+                "Key": object_key,
+                "ResponseContentType": get_video_content_type(object_key),
+                "ResponseContentDisposition": "inline",
+            }
             url = client.generate_presigned_url(
                 ClientMethod="get_object",
-                Params={
-                    "Bucket": settings.R2_BUCKET_NAME,
-                    "Key": object_key,
-                },
+                Params=params,
                 ExpiresIn=expires_in,
             )
             return url
@@ -256,8 +272,7 @@ class R2StorageService:
         object_key = self.generate_unique_object_key(sanitized_name)
 
         if not content_type or "/" not in content_type:
-            suffix = Path(sanitized_name).suffix.lower()
-            content_type = "video/mp4" if suffix == ".mp4" else f"video/{suffix[1:]}"
+            content_type = get_video_content_type(sanitized_name)
 
         # 1. Strict Storage Capacity Check BEFORE calling CreateMultipartUpload
         stored_bytes, _ = await self.get_bucket_storage_usage()
